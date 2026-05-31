@@ -23,7 +23,7 @@ try:
         PROVIDER_HEADERS_W,
         Audio,
         Subtitles,
-        get_video_codec,
+
         logger,
     )
 except ImportError:
@@ -36,7 +36,7 @@ except ImportError:
         PROVIDER_HEADERS_W,
         Audio,
         Subtitles,
-        get_video_codec,
+
         logger,
     )
 
@@ -100,25 +100,21 @@ def check_downloaded(episode_path):
         "audio_langs": set(),
     }
 
-    if not episode_path.exists():
+    # Normalise to the .m3u8 playlist path regardless of what extension was given
+    m3u8_path = (
+        episode_path
+        if episode_path.suffix == ".m3u8"
+        else episode_path.with_suffix(".m3u8")
+    )
+
+    if not m3u8_path.exists():
+        return result
+
+    # Require at least one segment file alongside the playlist
+    if not any(m3u8_path.parent.glob(f"{m3u8_path.stem}_*.ts")):
         return result
 
     result["exists"] = True
-
-    try:
-        probe = ffmpeg.probe(episode_path)
-    except ffmpeg.Error:
-        return result
-
-    streams = probe.get("streams", [])
-
-    for s in streams:
-        lang = s.get("tags", {}).get("language", "und")
-        if s.get("codec_type") == "video":
-            result["video_langs"].add(lang)
-        elif s.get("codec_type") == "audio":
-            result["audio_langs"].add(lang)
-
     return result
 
 
@@ -509,13 +505,17 @@ def download(self):
             try:
                 _reset_provider_resolution_cache(self)
                 stream_url = self.stream_url
-                check = check_downloaded(self._episode_path)
+                hls_output = self._episode_path.with_suffix(".m3u8")
+                check = check_downloaded(hls_output)
+                if check["exists"]:
+                    logger.debug(f"[SKIPPED] {self._file_name}")
+                    return
 
                 headers = PROVIDER_HEADERS_D.get(provider_name, {})
                 input_kwargs = {
                     "reconnect": 1,
                     "reconnect_streamed": 1,
-                    "reconnect_delay_max": 300,  # wait up to 5 min for connection recovery
+                    "reconnect_delay_max": 300,
                 }
                 if headers:
                     header_list = [f"{k}: {v}" for k, v in headers.items()]
@@ -535,32 +535,16 @@ def download(self):
                         raise ValueError(
                             f"Unsupported audio language for serienstream.to: {audio_enum}"
                         )
-                    wants_clean_video = True
                     sub_video_code = None
                 else:
                     selected_key = INVERSE_LANG_LABELS[self.selected_language]
                     audio_enum, sub_enum = LANG_KEY_MAP[selected_key]
-
                     audio_code = LANG_CODE_MAP[audio_enum]
-                    wants_clean_video = sub_enum == Subtitles.NONE
                     sub_video_code = (
-                        None if wants_clean_video else LANG_CODE_MAP[sub_enum]
+                        None
+                        if sub_enum == Subtitles.NONE
+                        else LANG_CODE_MAP[sub_enum]
                     )
-
-                has_video = bool(check["video_langs"])
-                has_audio = audio_code in check["audio_langs"]
-
-                need_audio = not has_audio
-                if not has_video:
-                    need_video = True
-                elif not wants_clean_video:
-                    need_video = sub_video_code not in check["video_langs"]
-                else:
-                    need_video = False
-
-                if not need_audio and not need_video:
-                    logger.debug(f"[SKIPPED] {self._file_name}")
-                    return
 
                 os.makedirs(self._folder_path, exist_ok=True)
 
@@ -568,113 +552,51 @@ def download(self):
                     os.path.splitext(self._file_name)[0] if self._file_name else ""
                 )
 
-                full_stream_needed = need_audio and need_video
+                segment_filename = str(
+                    self._episode_path.parent / (self._episode_path.stem + "_%03d.ts")
+                )
+                # Streaming-optimised HLS output:
+                #   hls_time=4          – 4-second segments (better seek granularity)
+                #   independent_segments – each segment is independently decodable
+                #   hls_playlist_type=vod – marks playlist as complete; enables random seek
+                hls_kwargs = {
+                    "format": "hls",
+                    "hls_time": 4,
+                    "hls_list_size": 0,
+                    "hls_segment_filename": segment_filename,
+                    "hls_flags": "independent_segments",
+                    "hls_playlist_type": "vod",
+                    "start_number": 0,
+                }
 
-                temp_audio = self._episode_path.with_suffix(".temp_audio.mkv")
-                temp_video = self._episode_path.with_suffix(".temp_video.mkv")
-                temp_full = self._episode_path.with_suffix(".temp_full.mkv")
-
-                if full_stream_needed:
-                    logger.debug(
-                        f"[DOWNLOADING] full preset (audio + video together) via {provider_name}"
-                    )
-
-                    stream_metadata = {"metadata:s:a:0": f"language={audio_code}"}
-                    if (not wants_clean_video) and sub_video_code:
-                        stream_metadata["metadata:s:v:0"] = f"language={sub_video_code}"
-
-                    video_codec = get_video_codec()
-                    _run_ffmpeg_with_progress(
-                        ffmpeg.input(stream_url, **input_kwargs).output(
-                            str(temp_full),
-                            vcodec=video_codec,
-                            acodec=video_codec,
-                            **stream_metadata,
-                        ),
-                        label=ep_label,
-                    )
-
-                    if self._episode_path.exists():
-                        inputs = [
-                            ffmpeg.input(str(self._episode_path)),
-                            ffmpeg.input(str(temp_full)),
-                        ]
-                        output_path = self._episode_path.with_suffix(".new.mkv")
-                        _run_ffmpeg_with_progress(
-                            ffmpeg.output(*inputs, str(output_path), c="copy")
-                        )
-                        os.replace(output_path, self._episode_path)
-                    else:
-                        os.replace(temp_full, self._episode_path)
-
-                    if temp_full.exists():
-                        temp_full.unlink()
-                    return
-
-                if need_audio:
-                    logger.debug(f"[DOWNLOADING] audio stream via {provider_name}")
-                    video_codec = get_video_codec()
-                    _run_ffmpeg_with_progress(
-                        ffmpeg.input(stream_url, **input_kwargs).output(
-                            str(temp_audio),
-                            acodec=video_codec,
-                            map="0:a:0?",
-                            **{"metadata:s:a:0": f"language={audio_code}"},
-                        ),
-                        label=ep_label,
-                    )
-
-                if need_video:
-                    logger.debug(f"[DOWNLOADING] video stream via {provider_name}")
-                    video_codec = get_video_codec()
-                    _run_ffmpeg_with_progress(
-                        ffmpeg.input(stream_url, **input_kwargs).output(
-                            str(temp_video),
-                            vcodec=video_codec,
-                            map="0:v:0?",
-                            **(
-                                {}
-                                if wants_clean_video
-                                else {"metadata:s:v:0": f"language={sub_video_code}"}
-                            ),
-                        ),
-                        label=ep_label,
-                    )
-
-                logger.debug("[MUXING] combining streams")
-                inputs = (
-                    [ffmpeg.input(str(self._episode_path))]
-                    if self._episode_path.exists()
-                    else []
+                logger.debug(
+                    f"[DOWNLOADING] full stream (audio + video) via {provider_name}"
                 )
 
-                if need_audio:
-                    inputs.append(ffmpeg.input(str(temp_audio)))
-                if need_video:
-                    inputs.append(ffmpeg.input(str(temp_video)))
+                stream_metadata = {"metadata:s:a:0": f"language={audio_code}"}
+                if sub_video_code:
+                    stream_metadata["metadata:s:v:0"] = f"language={sub_video_code}"
 
-                output_path = self._episode_path.with_suffix(".new.mkv")
                 _run_ffmpeg_with_progress(
-                    ffmpeg.output(*inputs, str(output_path), c="copy")
+                    ffmpeg.input(stream_url, **input_kwargs).output(
+                        str(hls_output),
+                        vcodec="copy",
+                        acodec="copy",
+                        **stream_metadata,
+                        **hls_kwargs,
+                    ),
+                    label=ep_label,
                 )
-                os.replace(output_path, self._episode_path)
-
-                for f in (temp_audio, temp_video):
-                    if f.exists():
-                        f.unlink()
-
                 return
 
             except Exception as e:
-                for suffix in (
-                    ".temp_full.mkv",
-                    ".temp_audio.mkv",
-                    ".temp_video.mkv",
-                    ".new.mkv",
-                ):
-                    temp = self._episode_path.with_suffix(suffix)
-                    if temp.exists():
-                        temp.unlink()
+                # Clean up any partial HLS output on failure
+                hls_partial = self._episode_path.with_suffix(".m3u8")
+                if hls_partial.exists():
+                    hls_partial.unlink()
+                stem = self._episode_path.stem
+                for ts_file in self._episode_path.parent.glob(f"{stem}_*.ts"):
+                    ts_file.unlink()
 
                 provider_errors[provider_name] = e
                 logger.error(

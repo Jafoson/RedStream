@@ -65,7 +65,7 @@ logger = get_logger(__name__)
 
 NAMING_TEMPLATE = os.getenv(
     "ANIWORLD_NAMING_TEMPLATE",
-    "{title} ({year}) [imdbid-{imdbid}]/Season {season}/{title} S{season}E{episode}.mkv",
+    "{title} ({year}) [imdbid-{imdbid}]/Season {season}/{title} S{season}E{episode}.m3u8",
 )
 
 # Video codec configuration

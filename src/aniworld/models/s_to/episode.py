@@ -385,7 +385,7 @@ class SerienstreamEpisode:
             try:
                 file_template = naming_template.split("/")[-1]
             except IndexError:
-                file_template = f"{self.series.title_cleaned} S{self.season.season_number:02d}E{self.episode_number:03d}.mkv"
+                file_template = f"{self.series.title_cleaned} S{self.season.season_number:02d}E{self.episode_number:03d}.m3u8"
 
             # Remove extension
             if "." in file_template:
@@ -417,11 +417,11 @@ class SerienstreamEpisode:
                 file_part = naming_template.split("/")[-1]
                 if "." in file_part:
                     ext = file_part.rsplit(".", 1)[-1]
-                    self.__file_extension = ext if ext else "mkv"
+                    self.__file_extension = ext if ext else "m3u8"
                 else:
-                    self.__file_extension = "mkv"
+                    self.__file_extension = "m3u8"
             except IndexError:
-                self.__file_extension = "mkv"
+                self.__file_extension = "m3u8"
         return self.__file_extension
 
     @property

@@ -1542,6 +1542,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         lang_folders = ["german-dub", "english-sub", "german-sub", "english-dub"]
         ep_re = re.compile(r"S(\d{2})E(\d{2,3})", re.IGNORECASE)
         video_exts = {
+            ".m3u8",
             ".mkv",
             ".mp4",
             ".avi",
@@ -1763,6 +1764,136 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         if deleted == 0:
             return jsonify({"error": "Nothing found to delete"}), 404
         return jsonify({"ok": True, "deleted": deleted})
+
+    # ── Streaming endpoints ───────────────────────────────────────────────────
+
+    @app.route("/api/stream")
+    def api_stream():
+        """Return the HLS stream URL for a downloaded episode.
+
+        Query params:
+            folder          – series folder name (e.g. "Highschool DxD (2012) [imdbid-tt…]")
+            season          – season number (int)
+            episode         – episode number (int)
+            custom_path_id  – (optional) custom path id
+        """
+        from pathlib import Path
+
+        folder = request.args.get("folder", "").strip()
+        season = request.args.get("season", type=int)
+        episode = request.args.get("episode", type=int)
+        custom_path_id_param = request.args.get("custom_path_id", type=int)
+
+        if not folder or season is None or episode is None:
+            return jsonify({"error": "folder, season and episode are required"}), 400
+
+        if ".." in folder or "/" in folder or "\\" in folder or "\x00" in folder:
+            return jsonify({"error": "invalid folder"}), 400
+
+        # Collect base directories to search
+        raw = os.environ.get("ANIWORLD_DOWNLOAD_PATH", "")
+        if raw:
+            dl_base = Path(raw).expanduser()
+            if not dl_base.is_absolute():
+                dl_base = Path.home() / dl_base
+        else:
+            dl_base = Path.home() / "Downloads"
+
+        if custom_path_id_param is not None:
+            cp = get_custom_path_by_id(custom_path_id_param)
+            if not cp:
+                return jsonify({"error": "Custom path not found"}), 404
+            search_bases = [Path(cp["path"]).expanduser()]
+            if not search_bases[0].is_absolute():
+                search_bases[0] = Path.home() / search_bases[0]
+        else:
+            search_bases = [dl_base]
+            for cp in get_custom_paths():
+                cp_path = Path(cp["path"]).expanduser()
+                if not cp_path.is_absolute():
+                    cp_path = Path.home() / cp_path
+                search_bases.append(cp_path)
+
+        ep_re = re.compile(rf"S{season:02d}E{episode:03d}(?!\d)", re.IGNORECASE)
+
+        for base in search_bases:
+            series_dir = base / folder
+            if not series_dir.is_dir():
+                continue
+            for f in series_dir.rglob("*.m3u8"):
+                if not ep_re.search(f.name):
+                    continue
+                try:
+                    rel = f.relative_to(base)
+                except ValueError:
+                    continue
+                stream_url = url_for(
+                    "api_stream_file",
+                    filepath=rel.as_posix(),
+                    _external=True,
+                )
+                return jsonify({"url": stream_url})
+
+        return jsonify({"error": "Episode not found"}), 404
+
+    @app.route("/api/stream/files/<path:filepath>")
+    def api_stream_file(filepath):
+        """Serve an .m3u8 playlist or .ts segment for HLS streaming.
+
+        The filepath is relative to one of the configured download directories.
+        Only .m3u8 and .ts files are served; anything else returns 404.
+        """
+        from flask import send_from_directory
+        from pathlib import Path
+
+        _ALLOWED_EXTS = {".m3u8", ".ts"}
+        _MIME = {
+            ".m3u8": "application/vnd.apple.mpegurl",
+            ".ts": "video/mp2t",
+        }
+
+        ext = Path(filepath).suffix.lower()
+        if ext not in _ALLOWED_EXTS:
+            return "", 404
+
+        # Collect all allowed base directories
+        raw = os.environ.get("ANIWORLD_DOWNLOAD_PATH", "")
+        if raw:
+            dl_base = Path(raw).expanduser()
+            if not dl_base.is_absolute():
+                dl_base = Path.home() / dl_base
+        else:
+            dl_base = Path.home() / "Downloads"
+
+        allowed_bases = [dl_base]
+        for cp in get_custom_paths():
+            cp_path = Path(cp["path"]).expanduser()
+            if not cp_path.is_absolute():
+                cp_path = Path.home() / cp_path
+            allowed_bases.append(cp_path)
+
+        for base in allowed_bases:
+            candidate = (base / filepath).resolve()
+            try:
+                candidate.relative_to(base.resolve())
+            except ValueError:
+                continue  # path traversal – skip
+
+            if not candidate.is_file():
+                continue
+
+            resp = send_from_directory(
+                str(candidate.parent),
+                candidate.name,
+                mimetype=_MIME[ext],
+            )
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            resp.headers["Cache-Control"] = "no-cache"
+            return resp
+
+        return "", 404
+
+    # ─────────────────────────────────────────────────────────────────────────
 
     if auth_enabled:
         from .auth import admin_required

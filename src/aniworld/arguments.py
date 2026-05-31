@@ -393,7 +393,8 @@ def parse_args():
         ](args.provider_url)
 
         download_dir = os.getenv("ANIWORLD_DOWNLOAD_PATH", ".")
-        output_path = os.path.join(download_dir, "input.mkv")
+        output_path = os.path.join(download_dir, "input.m3u8")
+        segment_path = os.path.join(download_dir, "input_%03d.ts")
 
         (
             ffmpeg.input(
@@ -402,8 +403,15 @@ def parse_args():
             )
             .output(
                 output_path,
-                c="copy",
-                f="matroska",
+                vcodec="copy",
+                acodec="copy",
+                format="hls",
+                hls_time=4,
+                hls_list_size=0,
+                hls_segment_filename=segment_path,
+                hls_flags="independent_segments",
+                hls_playlist_type="vod",
+                start_number=0,
             )
             .run()
         )
