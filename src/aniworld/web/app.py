@@ -1949,6 +1949,16 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             return jsonify({"progress": None})
         return jsonify({"progress": row})
 
+    @app.route("/api/skip-times", methods=["GET"])
+    def api_skip_times():
+        from .skip_times import get_skip_times_for_episode
+        title = request.args.get("series_title", "").strip()
+        episode = int(request.args.get("episode", 1))
+        if not title:
+            return jsonify({"op": None, "ed": None})
+        times = get_skip_times_for_episode(title, episode)
+        return jsonify(times)
+
     # ─────────────────────────────────────────────────────────────────────────
 
     if auth_enabled:
