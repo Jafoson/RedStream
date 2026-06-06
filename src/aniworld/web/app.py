@@ -27,6 +27,7 @@ from ..search import (
     random_anime,
 )
 from ..search import query as aniworld_query
+from .tmdb import search_tmdb
 from .db import (
     add_autosync_job,
     add_custom_path,
@@ -34,19 +35,24 @@ from .db import (
     cancel_queue_item,
     clear_completed,
     find_autosync_by_url,
+    get_all_watch_progress,
     get_autosync_job,
     get_autosync_jobs,
+    get_continue_watching,
     get_custom_path_by_id,
     get_custom_paths,
+    get_episode_progress_for_urls,
     get_general_stats,
     get_next_queued,
     get_queue,
     get_queue_stats,
     get_running,
     get_sync_stats,
+    get_watch_progress,
     init_autosync_db,
     init_custom_paths_db,
     init_queue_db,
+    init_watch_progress_db,
     is_queue_cancelled,
     is_series_queued_or_running,
     move_queue_item,
@@ -59,6 +65,7 @@ from .db import (
     update_autosync_job,
     update_queue_errors,
     update_queue_progress,
+    upsert_watch_progress,
 )
 
 logger = get_logger(__name__)
@@ -652,10 +659,11 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                 "app_version": app_version,
             }
 
-    # Initialize download queue, custom paths and autosync (works with or without auth)
+    # Initialize download queue, custom paths, autosync and watch progress (works with or without auth)
     init_queue_db()
     init_custom_paths_db()
     init_autosync_db()
+    init_watch_progress_db()
 
     # Wire up captcha hooks so the Playwright module can signal the Web UI
     from ..playwright import captcha as _captcha_mod
@@ -756,7 +764,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                         }
                     )
 
-        return jsonify({"results": results})
+        return jsonify({"results": _enrich_with_tmdb(results)})
 
     @app.route("/api/series")
     def api_series():
@@ -774,10 +782,16 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
                 parsed = urlparse(url)
                 poster = f"{parsed.scheme}://{parsed.netloc}{poster}"
+
+            tmdb = search_tmdb(series.title)
+            final_poster = tmdb["poster_url"] or poster or ""
+            final_backdrop = tmdb["backdrop_url"]
+
             return jsonify(
                 {
                     "title": series.title,
-                    "poster_url": _proxy_image_url(poster),
+                    "poster_url": _proxy_image_url(final_poster),
+                    "backdrop_url": _proxy_image_url(final_backdrop),
                     "description": getattr(series, "description", ""),
                     "genres": getattr(series, "genres", []),
                     "release_year": getattr(series, "release_year", ""),
@@ -889,6 +903,10 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             except Exception:
                 pass
 
+            # Bulk-fetch watch progress for all episodes in this season
+            ep_urls = [ep.url for ep in season.episodes]
+            progress_map = get_episode_progress_for_urls(ep_urls)
+
             episodes_data = []
             for ep in season.episodes:
                 downloaded = (
@@ -896,6 +914,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                     ep.episode_number,
                 ) in downloaded_eps
                 available_languages = _episode_language_labels(ep.provider_data)
+                prog = progress_map.get(ep.url, {})
 
                 episodes_data.append(
                     {
@@ -905,6 +924,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                         "title_en": getattr(ep, "title_en", ""),
                         "downloaded": downloaded,
                         "available_languages": available_languages,
+                        "watch_position": prog.get("position_seconds", 0),
+                        "watch_duration": prog.get("duration_seconds", 0),
+                        "is_watched": bool(prog.get("completed", 0)),
                     }
                 )
             return jsonify({"episodes": episodes_data})
@@ -1157,49 +1179,42 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             _browse_cache[key] = (now, results)
         return results
 
+    def _enrich_with_tmdb(results: list) -> list:
+        """Replace poster_url with TMDB image; fall back to original if TMDB has none."""
+        enriched = []
+        for r in results:
+            tmdb = search_tmdb(r.get("title", ""))
+            poster = tmdb["poster_url"] or r.get("poster_url", "")
+            enriched.append({**r, "poster_url": _proxy_image_url(poster)})
+        return enriched
+
     @app.route("/api/new-animes")
     def api_new_animes():
         results = _cached_browse("new_animes", fetch_new_animes)
         if results is None:
             return jsonify({"error": "Failed to fetch new animes"}), 500
-        proxied = [
-            {**r, "poster_url": _proxy_image_url(r.get("poster_url", ""))}
-            for r in results
-        ]
-        return jsonify({"results": proxied})
+        return jsonify({"results": _enrich_with_tmdb(results)})
 
     @app.route("/api/popular-animes")
     def api_popular_animes():
         results = _cached_browse("popular_animes", fetch_popular_animes)
         if results is None:
             return jsonify({"error": "Failed to fetch popular animes"}), 500
-        proxied = [
-            {**r, "poster_url": _proxy_image_url(r.get("poster_url", ""))}
-            for r in results
-        ]
-        return jsonify({"results": proxied})
+        return jsonify({"results": _enrich_with_tmdb(results)})
 
     @app.route("/api/new-series")
     def api_new_series():
         results = _cached_browse("new_series", fetch_new_series)
         if results is None:
             return jsonify({"error": "Failed to fetch new series"}), 500
-        proxied = [
-            {**r, "poster_url": _proxy_image_url(r.get("poster_url", ""))}
-            for r in results
-        ]
-        return jsonify({"results": proxied})
+        return jsonify({"results": _enrich_with_tmdb(results)})
 
     @app.route("/api/popular-series")
     def api_popular_series():
         results = _cached_browse("popular_series", fetch_popular_series)
         if results is None:
             return jsonify({"error": "Failed to fetch popular series"}), 500
-        proxied = [
-            {**r, "poster_url": _proxy_image_url(r.get("poster_url", ""))}
-            for r in results
-        ]
-        return jsonify({"results": proxied})
+        return jsonify({"results": _enrich_with_tmdb(results)})
 
     @app.route("/api/downloaded-folders")
     def api_downloaded_folders():
@@ -1892,6 +1907,45 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             return resp
 
         return "", 404
+
+    # ── Watch Progress ────────────────────────────────────────────────────────
+
+    @app.route("/api/progress", methods=["POST"])
+    def api_save_progress():
+        data = request.get_json(force=True) or {}
+        episode_url = (data.get("episode_url") or "").strip()
+        if not episode_url:
+            return jsonify({"error": "episode_url is required"}), 400
+        try:
+            upsert_watch_progress(
+                episode_url=episode_url,
+                series_title=data.get("series_title"),
+                series_url=data.get("series_url"),
+                season=int(data.get("season") or 0),
+                episode_number=int(data.get("episode_number") or 0),
+                episode_title=data.get("episode_title"),
+                position_seconds=float(data.get("position_seconds") or 0),
+                duration_seconds=float(data.get("duration_seconds") or 0),
+                completed=bool(data.get("completed", False)),
+            )
+            return jsonify({"ok": True})
+        except Exception as e:
+            logger.error(f"Save progress failed: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/progress", methods=["GET"])
+    def api_get_progress():
+        limit = int(request.args.get("limit", 50))
+        continue_only = request.args.get("continue", "0") == "1"
+        rows = get_continue_watching(limit=limit) if continue_only else get_all_watch_progress(limit=limit)
+        return jsonify({"progress": rows})
+
+    @app.route("/api/progress/<path:episode_url>", methods=["GET"])
+    def api_get_episode_progress(episode_url):
+        row = get_watch_progress(episode_url)
+        if not row:
+            return jsonify({"progress": None})
+        return jsonify({"progress": row})
 
     # ─────────────────────────────────────────────────────────────────────────
 

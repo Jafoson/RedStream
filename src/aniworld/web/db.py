@@ -764,6 +764,136 @@ def remove_autosync_job(job_id):
         conn.close()
 
 
+# ===== Watch Progress =====
+
+_CREATE_WATCH_PROGRESS_TABLE = """\
+CREATE TABLE IF NOT EXISTS watch_progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    episode_url TEXT NOT NULL UNIQUE,
+    series_title TEXT,
+    series_url TEXT,
+    season INTEGER NOT NULL DEFAULT 0,
+    episode_number INTEGER NOT NULL DEFAULT 0,
+    episode_title TEXT,
+    position_seconds REAL NOT NULL DEFAULT 0,
+    duration_seconds REAL NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+
+def init_watch_progress_db():
+    ANIWORLD_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    conn = get_db()
+    try:
+        conn.execute(_CREATE_WATCH_PROGRESS_TABLE)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def upsert_watch_progress(
+    episode_url,
+    series_title=None,
+    series_url=None,
+    season=0,
+    episode_number=0,
+    episode_title=None,
+    position_seconds=0,
+    duration_seconds=0,
+    completed=False,
+):
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO watch_progress
+                (episode_url, series_title, series_url, season, episode_number,
+                 episode_title, position_seconds, duration_seconds, completed, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(episode_url) DO UPDATE SET
+                series_title = excluded.series_title,
+                series_url = excluded.series_url,
+                season = excluded.season,
+                episode_number = excluded.episode_number,
+                episode_title = excluded.episode_title,
+                position_seconds = excluded.position_seconds,
+                duration_seconds = excluded.duration_seconds,
+                completed = excluded.completed,
+                updated_at = datetime('now')
+            """,
+            (
+                episode_url,
+                series_title,
+                series_url,
+                season,
+                episode_number,
+                episode_title,
+                float(position_seconds),
+                float(duration_seconds),
+                1 if completed else 0,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_watch_progress(episode_url):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM watch_progress WHERE episode_url = ?",
+            (episode_url,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_episode_progress_for_urls(episode_urls):
+    """Returns {episode_url: dict} for the given list of URLs."""
+    if not episode_urls:
+        return {}
+    conn = get_db()
+    try:
+        placeholders = ",".join("?" * len(episode_urls))
+        rows = conn.execute(
+            f"SELECT * FROM watch_progress WHERE episode_url IN ({placeholders})",
+            tuple(episode_urls),
+        ).fetchall()
+        return {r["episode_url"]: dict(r) for r in rows}
+    finally:
+        conn.close()
+
+
+def get_all_watch_progress(limit=50):
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM watch_progress ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_continue_watching(limit=20):
+    """In-progress episodes: has position > 30s and not completed."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM watch_progress WHERE completed = 0 AND position_seconds > 30 "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 # ===== Statistics =====
 
 
