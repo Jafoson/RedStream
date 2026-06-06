@@ -867,8 +867,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                     cp_path = Path.home() / cp_path
                 scan_roots.append(cp_path)
 
-            # Build set of (season_num, episode_num) found on disk
-            downloaded_eps = set()
+            # Build map of (season_num, episode_num) -> preview_url found on disk
+            from .thumbnails import preview_path as _preview_path
+            downloaded_info: dict[tuple[int, int], str | None] = {}
             try:
                 title_clean = ""
                 if series:
@@ -878,13 +879,15 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                     ).lower()
                 if title_clean:
                     ep_re = re.compile(r"S(\d{2})E(\d{2,3})", re.IGNORECASE)
-                    all_bases = []
+                    all_bases_with_root: list[tuple[Path, Path]] = []
                     for root in scan_roots:
                         if lang_sep:
-                            all_bases.extend([root / lf for lf in lang_folders])
+                            all_bases_with_root.extend(
+                                [(root, root / lf) for lf in lang_folders]
+                            )
                         else:
-                            all_bases.append(root)
-                    for base in all_bases:
+                            all_bases_with_root.append((root, root))
+                    for root, base in all_bases_with_root:
                         if not base.is_dir():
                             continue
                         for folder in base.iterdir():
@@ -893,15 +896,28 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                                 or not folder.name.lower().startswith(title_clean)
                             ):
                                 continue
-                            for f in folder.rglob("*"):
-                                if f.is_file():
-                                    m = ep_re.search(f.name)
-                                    if m:
-                                        downloaded_eps.add(
-                                            (int(m.group(1)), int(m.group(2)))
-                                        )
+                            for f in folder.rglob("*.m3u8"):
+                                if not f.is_file():
+                                    continue
+                                m = ep_re.search(f.name)
+                                if not m:
+                                    continue
+                                key = (int(m.group(1)), int(m.group(2)))
+                                if key in downloaded_info:
+                                    continue
+                                prev = _preview_path(f)
+                                if prev.exists():
+                                    try:
+                                        rel = prev.relative_to(root)
+                                        downloaded_info[key] = f"/api/episode-preview/{rel.as_posix()}"
+                                    except ValueError:
+                                        downloaded_info[key] = None
+                                else:
+                                    downloaded_info[key] = None
             except Exception:
                 pass
+
+            downloaded_eps = set(downloaded_info.keys())
 
             # Bulk-fetch watch progress for all episodes in this season
             ep_urls = [ep.url for ep in season.episodes]
@@ -909,10 +925,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
             episodes_data = []
             for ep in season.episodes:
-                downloaded = (
-                    ep.season.season_number,
-                    ep.episode_number,
-                ) in downloaded_eps
+                key = (ep.season.season_number, ep.episode_number)
+                downloaded = key in downloaded_eps
+                preview_url = downloaded_info.get(key)
                 available_languages = _episode_language_labels(ep.provider_data)
                 prog = progress_map.get(ep.url, {})
 
@@ -927,6 +942,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                         "watch_position": prog.get("position_seconds", 0),
                         "watch_duration": prog.get("duration_seconds", 0),
                         "is_watched": bool(prog.get("completed", 0)),
+                        "preview_url": preview_url,
                     }
                 )
             return jsonify({"episodes": episodes_data})
@@ -1948,6 +1964,68 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         if not row:
             return jsonify({"progress": None})
         return jsonify({"progress": row})
+
+    @app.route("/api/thumbnails", methods=["GET"])
+    def api_thumbnails():
+        from .thumbnails import get_or_start, resolve_m3u8, sprite_paths
+        filepath = request.args.get("filepath", "").strip()
+        if not filepath or ".." in filepath:
+            return jsonify({"error": "invalid filepath"}), 400
+        m3u8 = resolve_m3u8(filepath)
+        if m3u8 is None:
+            return jsonify({"error": "file not found"}), 404
+        result = get_or_start(m3u8)
+        if result.get("status") == "ready":
+            sprite_path, _ = sprite_paths(m3u8)
+            result["sprite_filepath"] = sprite_path.relative_to(m3u8.parent.parent.parent).as_posix() \
+                if False else filepath.rsplit(".", 1)[0] + ".thumbs.jpg"
+        return jsonify(result)
+
+    @app.route("/api/thumbnails/sprite/<path:filepath>")
+    def api_thumbnails_sprite(filepath):
+        from flask import send_from_directory
+        from .thumbnails import resolve_m3u8
+        from pathlib import Path
+        # Replace .m3u8 suffix with .thumbs.jpg if needed, then resolve base dir
+        m3u8_filepath = filepath.replace(".thumbs.jpg", ".m3u8")
+        m3u8 = resolve_m3u8(m3u8_filepath)
+        if m3u8 is None:
+            return "", 404
+        sprite = m3u8.parent / (m3u8.stem + ".thumbs.jpg")
+        if not sprite.exists():
+            return "", 404
+        return send_from_directory(str(sprite.parent), sprite.name, mimetype="image/jpeg")
+
+    @app.route("/api/episode-preview/<path:filepath>")
+    def api_episode_preview(filepath):
+        from flask import send_from_directory
+        from pathlib import Path
+
+        if ".." in filepath or "\x00" in filepath:
+            return "", 404
+
+        raw = os.environ.get("ANIWORLD_DOWNLOAD_PATH", "")
+        dl_base = (Path(raw).expanduser() if raw else Path.home() / "Downloads")
+        if not dl_base.is_absolute():
+            dl_base = Path.home() / dl_base
+
+        search_bases = [dl_base]
+        for cp in get_custom_paths():
+            cp_path = Path(cp["path"]).expanduser()
+            if not cp_path.is_absolute():
+                cp_path = Path.home() / cp_path
+            search_bases.append(cp_path)
+
+        for base in search_bases:
+            candidate = (base / filepath).resolve()
+            try:
+                candidate.relative_to(base.resolve())
+            except ValueError:
+                continue
+            if candidate.is_file() and candidate.suffix.lower() == ".jpg":
+                return send_from_directory(str(candidate.parent), candidate.name, mimetype="image/jpeg")
+
+        return "", 404
 
     @app.route("/api/skip-times", methods=["GET"])
     def api_skip_times():
