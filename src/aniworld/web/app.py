@@ -1045,6 +1045,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         ok, err = cancel_queue_item(queue_id)
         if not ok:
             return jsonify({"error": err}), 400
+        from ..models.common.common import kill_active_ffmpeg
+        kill_active_ffmpeg()
         return jsonify({"ok": True})
 
     @app.route("/api/queue/<int:queue_id>/move", methods=["POST"])
