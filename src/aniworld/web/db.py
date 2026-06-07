@@ -778,6 +778,7 @@ CREATE TABLE IF NOT EXISTS watch_progress (
     position_seconds REAL NOT NULL DEFAULT 0,
     duration_seconds REAL NOT NULL DEFAULT 0,
     completed INTEGER NOT NULL DEFAULT 0,
+    stream_file TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -788,6 +789,11 @@ def init_watch_progress_db():
     conn = get_db()
     try:
         conn.execute(_CREATE_WATCH_PROGRESS_TABLE)
+        # Migrate: add stream_file column if missing (existing DBs)
+        try:
+            conn.execute("ALTER TABLE watch_progress ADD COLUMN stream_file TEXT")
+        except Exception:
+            pass
         conn.commit()
     finally:
         conn.close()
@@ -803,6 +809,7 @@ def upsert_watch_progress(
     position_seconds=0,
     duration_seconds=0,
     completed=False,
+    stream_file=None,
 ):
     conn = get_db()
     try:
@@ -810,8 +817,9 @@ def upsert_watch_progress(
             """
             INSERT INTO watch_progress
                 (episode_url, series_title, series_url, season, episode_number,
-                 episode_title, position_seconds, duration_seconds, completed, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                 episode_title, position_seconds, duration_seconds, completed,
+                 stream_file, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
             ON CONFLICT(episode_url) DO UPDATE SET
                 series_title = excluded.series_title,
                 series_url = excluded.series_url,
@@ -821,6 +829,7 @@ def upsert_watch_progress(
                 position_seconds = excluded.position_seconds,
                 duration_seconds = excluded.duration_seconds,
                 completed = excluded.completed,
+                stream_file = COALESCE(excluded.stream_file, watch_progress.stream_file),
                 updated_at = datetime('now')
             """,
             (
@@ -833,6 +842,7 @@ def upsert_watch_progress(
                 float(position_seconds),
                 float(duration_seconds),
                 1 if completed else 0,
+                stream_file,
             ),
         )
         conn.commit()

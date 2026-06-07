@@ -1935,6 +1935,17 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         if not episode_url:
             return jsonify({"error": "episode_url is required"}), 400
         try:
+            # Extract relative file path from stream URL if provided
+            # e.g. "http://host/api/stream/files/One%20Piece/S01E009.m3u8"
+            #   -> "One Piece/S01E009.m3u8"
+            stream_file = None
+            raw_stream_url = (data.get("stream_file") or "").strip()
+            if raw_stream_url:
+                from urllib.parse import urlparse, unquote
+                path = urlparse(raw_stream_url).path
+                prefix = "/api/stream/files/"
+                if prefix in path:
+                    stream_file = unquote(path[path.index(prefix) + len(prefix):])
             upsert_watch_progress(
                 episode_url=episode_url,
                 series_title=data.get("series_title"),
@@ -1945,6 +1956,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                 position_seconds=float(data.get("position_seconds") or 0),
                 duration_seconds=float(data.get("duration_seconds") or 0),
                 completed=bool(data.get("completed", False)),
+                stream_file=stream_file,
             )
             return jsonify({"ok": True})
         except Exception as e:
@@ -1953,10 +1965,77 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
     @app.route("/api/progress", methods=["GET"])
     def api_get_progress():
+        from pathlib import Path as _P
+        from .thumbnails import preview_path as _prev_path
         limit = int(request.args.get("limit", 50))
         continue_only = request.args.get("continue", "0") == "1"
         rows = get_continue_watching(limit=limit) if continue_only else get_all_watch_progress(limit=limit)
-        return jsonify({"progress": rows})
+
+        # Build scan roots (mirrors episodes endpoint logic)
+        _dl_str = os.environ.get("ANIWORLD_DOWNLOAD_PATH", "")
+        if _dl_str:
+            dl_base = _P(_dl_str).expanduser()
+            if not dl_base.is_absolute():
+                dl_base = _P.home() / dl_base
+        else:
+            dl_base = _P.home() / "Downloads"
+        scan_roots = [dl_base] + [
+            (_P(cp["path"]).expanduser() if _P(cp["path"]).is_absolute()
+             else _P.home() / cp["path"])
+            for cp in get_custom_paths()
+        ]
+
+        # Scan all download dirs once and build (title_lower, season, ep) -> preview_url map
+        ep_re = re.compile(r"S(\d{2})E(\d{2,3})", re.IGNORECASE)
+        unique_titles = set(
+            (r.get("series_title") or "").lower()
+            for r in rows
+            if r.get("series_title")
+        )
+        preview_map = {}
+        for title_lower in unique_titles:
+            for root in scan_roots:
+                if not root.is_dir():
+                    continue
+                for folder in root.iterdir():
+                    if not folder.is_dir():
+                        continue
+                    if not folder.name.lower().startswith(title_lower):
+                        continue
+                    for f in folder.rglob("*.m3u8"):
+                        m = ep_re.search(f.name)
+                        if not m:
+                            continue
+                        pkey = (title_lower, int(m.group(1)), int(m.group(2)))
+                        if pkey in preview_map:
+                            continue
+                        prev = _prev_path(f)
+                        if prev.exists():
+                            try:
+                                rel = prev.relative_to(root)
+                                preview_map[pkey] = "/api/episode-preview/" + rel.as_posix()
+                            except ValueError:
+                                pass
+
+        # Enrich rows — build a new list to avoid any in-place mutation issues
+        poster_cache = {}
+        enriched = []
+        for row in rows:
+            title = row.get("series_title") or ""
+            if title not in poster_cache:
+                try:
+                    tmdb = search_tmdb(title)
+                    poster_cache[title] = _proxy_image_url(tmdb.get("poster_url") or "")
+                except Exception:
+                    poster_cache[title] = ""
+            pkey = (title.lower(), row.get("season") or 0, row.get("episode_number") or 0)
+            enriched.append({
+                **row,
+                "poster_url": poster_cache[title],
+                "preview_url": preview_map.get(pkey, ""),
+            })
+
+        return jsonify({"progress": enriched})
 
     @app.route("/api/progress/<path:episode_url>", methods=["GET"])
     def api_get_episode_progress(episode_url):
