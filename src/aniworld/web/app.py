@@ -19,10 +19,14 @@ from ..extractors import provider_functions
 from ..logger import get_logger
 from ..providers import resolve_provider
 from ..search import (
+    SERIES_GENRES,
+    fetch_all_animes,
+    fetch_all_series,
     fetch_new_animes,
     fetch_new_series,
     fetch_popular_animes,
     fetch_popular_series,
+    fetch_series_genre_slugs,
     query_s_to,
     random_anime,
 )
@@ -32,6 +36,7 @@ from .db import (
     add_autosync_job,
     add_custom_path,
     add_to_queue,
+    add_to_watchlist,
     cancel_queue_item,
     clear_completed,
     find_autosync_by_url,
@@ -49,16 +54,21 @@ from .db import (
     get_running,
     get_sync_stats,
     get_watch_progress,
+    get_watch_progress_for_series,
+    get_watchlist,
     init_autosync_db,
     init_custom_paths_db,
     init_queue_db,
     init_watch_progress_db,
+    init_watchlist_db,
+    is_in_watchlist,
     is_queue_cancelled,
     is_series_queued_or_running,
     move_queue_item,
     remove_autosync_job,
     remove_custom_path,
     remove_from_queue,
+    remove_from_watchlist,
     set_captcha_url,
     clear_captcha_url,
     set_queue_status,
@@ -330,10 +340,35 @@ def _ensure_queue_worker():
     thread.start()
 
 
+def _is_user_caught_up(series_url, last_ep):
+    """Return True if the user has watched (≥80 %) or completed *last_ep*."""
+    # Primary: look up by exact episode URL
+    progress_map = get_episode_progress_for_urls([last_ep.url])
+    prog = progress_map.get(last_ep.url)
+    if prog:
+        if prog.get("completed"):
+            return True
+        dur = prog.get("duration_seconds", 0)
+        if dur > 0 and prog.get("position_seconds", 0) / dur >= 0.8:
+            return True
+
+    # Fallback: match by (series_url, season, episode_number) in case the URL changed
+    last_season = last_ep.season.season_number
+    last_ep_num = last_ep.episode_number
+    for p in get_watch_progress_for_series(series_url):
+        if p.get("season") == last_season and p.get("episode_number") == last_ep_num:
+            if p.get("completed"):
+                return True
+            dur = p.get("duration_seconds", 0)
+            if dur > 0 and p.get("position_seconds", 0) / dur >= 0.8:
+                return True
+
+    return False
+
+
 def _run_autosync_for_job(job):
-    """Check a single autosync job for new/missing episodes and queue them."""
+    """Queue newly released episodes when the user is caught up with the series."""
     from datetime import datetime
-    from pathlib import Path
 
     job_id = job["id"]
     with _syncing_jobs_lock:
@@ -346,146 +381,100 @@ def _run_autosync_for_job(job):
         prov = resolve_provider(job["series_url"])
         series = prov.series_cls(url=job["series_url"])
 
-        lang_sep = os.environ.get("ANIWORLD_LANG_SEPARATION", "0") == "1"
-        # Only use lang_sep for "All Languages" when the global setting is enabled;
-        # otherwise scan root directory to avoid phantom missing-episode detection.
-        if job.get("language") == "All Languages" and not lang_sep:
-            logger.warning(
-                "Auto-sync job '%s' uses 'All Languages' but lang_separation is off — scanning root.",
-                job.get("title", "?"),
-            )
+        # Collect all episodes in season order (stable index for tracking)
+        all_episodes = []
+        for season in series.seasons:
+            season_obj = prov.season_cls(url=season.url, series=series)
+            for ep in season_obj.episodes:
+                all_episodes.append(ep)
 
+        current_count = len(all_episodes)
+        queued_up_to = job.get("episodes_queued_up_to", 0)
+        now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+        update_fields = {
+            "last_check": now_str,
+            "episodes_found": current_count,
+        }
+
+        # First run: record baseline so we know what was available when tracking started.
+        # Don't queue anything — we only act on episodes that appear *after* this point.
+        if queued_up_to == 0:
+            logger.info(
+                "Auto-sync '%s': first run, baseline = %d episodes.",
+                job.get("title", "?"), current_count,
+            )
+            update_fields["episodes_queued_up_to"] = current_count
+            update_autosync_job(job["id"], **update_fields)
+            return
+
+        # Nothing new since last check
+        if current_count <= queued_up_to:
+            update_autosync_job(job["id"], **update_fields)
+            return
+
+        # New episodes appeared — only queue them if the user is caught up
+        new_episodes = all_episodes[queued_up_to:]
+        last_baseline_ep = all_episodes[queued_up_to - 1]
+
+        if not _is_user_caught_up(job["series_url"], last_baseline_ep):
+            logger.info(
+                "Auto-sync '%s': %d new episode(s) available but user hasn't watched "
+                "S%02dE%02d yet — skipping.",
+                job.get("title", "?"), len(new_episodes),
+                last_baseline_ep.season.season_number, last_baseline_ep.episode_number,
+            )
+            update_autosync_job(job["id"], **update_fields)
+            return
+
+        # Build language list
         lang_folder_map = {
             "German Dub": "german-dub",
             "English Sub": "english-sub",
             "German Sub": "german-sub",
             "English Dub": "english-dub",
         }
-
-        target_languages = []
         if job.get("language") == "All Languages":
             disable_eng_sub = os.environ.get("ANIWORLD_DISABLE_ENGLISH_SUB", "0") == "1"
-            for lang in lang_folder_map.keys():
-                if disable_eng_sub and lang == "English Sub":
-                    continue
-                target_languages.append(lang)
+            target_languages = [
+                lang for lang in lang_folder_map
+                if not (disable_eng_sub and lang == "English Sub")
+            ]
         else:
-            target_languages.append(job["language"])
+            target_languages = [job["language"]]
 
-        total_new_queued = 0
-        total_episodes_found = 0
+        new_ep_urls = [ep.url for ep in new_episodes]
+        total_queued = 0
 
         for target_lang in target_languages:
-            job_lang_folder = lang_folder_map.get(
-                target_lang, target_lang.lower().replace(" ", "-")
+            if is_series_queued_or_running(job["series_url"], language=target_lang):
+                logger.info(
+                    "Auto-sync skipped '%s' (%s) — already queued/running",
+                    job["title"], target_lang,
+                )
+                continue
+            add_to_queue(
+                title=job["title"],
+                series_url=job["series_url"],
+                episodes=new_ep_urls,
+                language=target_lang,
+                provider=job["provider"],
+                username=job.get("added_by"),
+                custom_path_id=job.get("custom_path_id"),
+                source="sync:all_langs" if job.get("language") == "All Languages" else "sync",
+            )
+            total_queued += len(new_ep_urls)
+            logger.info(
+                "Auto-sync queued %d new episode(s) for '%s' (%s)",
+                len(new_ep_urls), job["title"], target_lang,
             )
 
-            raw = os.environ.get("ANIWORLD_DOWNLOAD_PATH", "")
-            if raw:
-                dl_base = Path(raw).expanduser()
-                if not dl_base.is_absolute():
-                    dl_base = Path.home() / dl_base
-            else:
-                dl_base = Path.home() / "Downloads"
-
-            scan_roots = [dl_base]
-            for cp in get_custom_paths():
-                cp_path = Path(cp["path"]).expanduser()
-                if not cp_path.is_absolute():
-                    cp_path = Path.home() / cp_path
-                scan_roots.append(cp_path)
-
-            # Build set of downloaded (season, episode) on disk
-            downloaded_eps = set()
-            title_clean = (
-                getattr(series, "title_cleaned", None) or getattr(series, "title", "")
-            ).lower()
-            if title_clean:
-                ep_re = re.compile(r"S(\d{2})E(\d{2,3})", re.IGNORECASE)
-                all_bases = []
-                for root in scan_roots:
-                    if lang_sep:
-                        all_bases.append(root / job_lang_folder)
-                    else:
-                        all_bases.append(root)
-                for base in all_bases:
-                    if not base.is_dir():
-                        continue
-                    for folder in base.iterdir():
-                        if not folder.is_dir() or not folder.name.lower().startswith(
-                            title_clean
-                        ):
-                            continue
-                        for f in folder.rglob("*"):
-                            if f.is_file():
-                                m = ep_re.search(f.name)
-                                if m:
-                                    downloaded_eps.add(
-                                        (int(m.group(1)), int(m.group(2)))
-                                    )
-
-            # Collect all episode URLs that are NOT yet downloaded
-            missing_episodes = []
-            lang_total_found = 0
-            for season in series.seasons:
-                season_obj = prov.season_cls(url=season.url, series=series)
-                for ep in season_obj.episodes:
-                    # Depending on provider, might need to pre-filter by language here
-                    # But the downloader expects full episode URLs and it will pick the right language within them.
-                    lang_total_found += 1
-                    key = (ep.season.season_number, ep.episode_number)
-                    if key not in downloaded_eps:
-                        missing_episodes.append(ep.url)
-
-            # In "All Languages" mode we want to make sure the specific language is actually
-            # available on this episode before downloading? For VOE/Vidoza, it downloads what is chosen.
-            # If a language isn't available, the extractor fails, which is fine (handled in queue).
-            # But the queue item will contain episodes.
-
-            # We use max of lang_total_found for updating stats (usually they are same across languages)
-            if lang_total_found > total_episodes_found:
-                total_episodes_found = lang_total_found
-
-            if missing_episodes:
-                # Skip if series is already queued or running for THIS language
-                if is_series_queued_or_running(job["series_url"], language=target_lang):
-                    logger.info(
-                        "Auto-sync skipped '%s' (%s) — already queued/running",
-                        job["title"],
-                        target_lang,
-                    )
-                    continue
-
-                total_new_queued += len(missing_episodes)
-                add_to_queue(
-                    title=job["title"],
-                    series_url=job["series_url"],
-                    episodes=missing_episodes,
-                    language=target_lang,
-                    provider=job["provider"],
-                    username=job.get("added_by"),
-                    custom_path_id=job.get("custom_path_id"),
-                    source="sync:all_langs"
-                    if job.get("language") == "All Languages"
-                    else "sync",
-                )
-                logger.info(
-                    "Auto-sync queued %d episodes for '%s' (%s)",
-                    len(missing_episodes),
-                    job["title"],
-                    target_lang,
-                )
-
-        now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        update_fields = {
-            "last_check": now_str,
-            "episodes_found": total_episodes_found,
-        }
-
-        if total_new_queued > 0:
+        if total_queued > 0:
             update_fields["last_new_found"] = now_str
 
+        update_fields["episodes_queued_up_to"] = current_count
         update_autosync_job(job["id"], **update_fields)
+
     except Exception as e:
         logger.error("Auto-sync failed for '%s': %s", job.get("title", "?"), e)
         from datetime import datetime
@@ -664,6 +653,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
     init_custom_paths_db()
     init_autosync_db()
     init_watch_progress_db()
+    init_watchlist_db()
 
     # Wire up captcha hooks so the Playwright module can signal the Web UI
     from ..playwright import captcha as _captcha_mod
@@ -1197,6 +1187,20 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             _browse_cache[key] = (now, results)
         return results
 
+    _tmdb_poster_cache: dict = {}
+
+    @app.route("/api/tmdb-poster")
+    def api_tmdb_poster():
+        title = request.args.get("title", "").strip()
+        if not title:
+            return jsonify({"poster_url": ""}), 200
+        if title in _tmdb_poster_cache:
+            return jsonify({"poster_url": _tmdb_poster_cache[title]})
+        result = search_tmdb(title)
+        poster = _proxy_image_url(result.get("poster_url", ""))
+        _tmdb_poster_cache[title] = poster
+        return jsonify({"poster_url": poster})
+
     def _enrich_with_tmdb(results: list) -> list:
         """Replace poster_url with TMDB image; fall back to original if TMDB has none."""
         enriched = []
@@ -1233,6 +1237,64 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         if results is None:
             return jsonify({"error": "Failed to fetch popular series"}), 500
         return jsonify({"results": _enrich_with_tmdb(results)})
+
+    @app.route("/api/all-animes")
+    def api_all_animes():
+        page = max(1, int(request.args.get("page", 1)))
+        per_page = min(100, max(10, int(request.args.get("per_page", 50))))
+        genre = request.args.get("genre", "").strip()
+        all_results = _cached_browse("all_animes", fetch_all_animes)
+        if all_results is None:
+            return jsonify({"error": "Failed to fetch anime list"}), 500
+        # Collect all unique genres from the full unfiltered list
+        seen_genres = set()
+        all_genres = []
+        for r in all_results:
+            for g in r.get("genres", []):
+                if g not in seen_genres:
+                    seen_genres.add(g)
+                    all_genres.append(g)
+        all_genres.sort()
+        results = [r for r in all_results if genre in r.get("genres", [])] if genre else all_results
+        total = len(results)
+        start = (page - 1) * per_page
+        end = start + per_page
+        return jsonify({
+            "results": results[start:end],
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "has_more": end < total,
+            "all_genres": all_genres,
+        })
+
+    @app.route("/api/all-series")
+    def api_all_series():
+        page = max(1, int(request.args.get("page", 1)))
+        per_page = min(100, max(10, int(request.args.get("per_page", 50))))
+        genre = request.args.get("genre", "").strip()
+        all_results = _cached_browse("all_series", fetch_all_series)
+        if all_results is None:
+            return jsonify({"error": "Failed to fetch series list"}), 500
+        # Genres are fetched from s.to genre pages on demand — use the known list immediately.
+        all_genres = sorted(SERIES_GENRES.keys())
+        if genre and genre in SERIES_GENRES:
+            # Filter using pre-fetched s.to genre slugs (blocks until ready, then cached)
+            genre_slugs = fetch_series_genre_slugs(genre)
+            results = [r for r in all_results if r["url"].rstrip("/").split("/")[-1] in genre_slugs]
+        else:
+            results = all_results
+        total = len(results)
+        start = (page - 1) * per_page
+        end = start + per_page
+        return jsonify({
+            "results": results[start:end],
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "has_more": end < total,
+            "all_genres": all_genres,
+        })
 
     @app.route("/api/downloaded-folders")
     def api_downloaded_folders():
@@ -1618,42 +1680,55 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                         continue
                     snum = int(m.group(1))
                     enum = int(m.group(2))
-                    is_video = f.suffix.lower() in video_exts
+                    ext = f.suffix.lower()
                     try:
                         fsize = f.stat().st_size
                     except OSError:
                         fsize = 0
                     skey = str(snum)
+                    # seasons[skey] is a dict keyed by episode number so each
+                    # episode appears exactly once regardless of how many .ts
+                    # segment files belong to it.
                     if skey not in entry["seasons"]:
-                        entry["seasons"][skey] = []
-                    if not any(
-                        e["episode"] == enum and e["file"] == f.name
-                        for e in entry["seasons"][skey]
-                    ):
-                        entry["seasons"][skey].append(
-                            {
-                                "episode": enum,
-                                "file": f.name,
-                                "size": fsize,
-                                "is_video": is_video,
-                            }
-                        )
-                        entry["total_size"] += fsize
+                        entry["seasons"][skey] = {}
+                    ep_map = entry["seasons"][skey]
+                    if enum not in ep_map:
+                        ep_map[enum] = {
+                            "episode": enum,
+                            "file": f.name,
+                            "size": 0,
+                            "is_video": False,
+                        }
+                    ep = ep_map[enum]
+                    ep["size"] += fsize
+                    entry["total_size"] += fsize
+                    # Prefer .m3u8 as the representative file; fall back to any
+                    # other video file if no playlist has been seen yet.
+                    if ext == ".m3u8":
+                        ep["file"] = f.name
+                        ep["is_video"] = True
+                    elif ext in video_exts and not ep["is_video"]:
+                        ep["file"] = f.name
+                        ep["is_video"] = True
 
             result = []
             for entry in sorted(titles.values(), key=lambda x: x["folder"].lower()):
-                if not any(entry["seasons"].values()):
+                # Convert per-season dicts → sorted lists
+                seasons_out = {}
+                for skey, ep_map in entry["seasons"].items():
+                    eps = sorted(ep_map.values(), key=lambda e: e["episode"])
+                    if eps:
+                        seasons_out[skey] = eps
+                if not seasons_out:
                     continue
                 total_eps = sum(
                     sum(1 for e in eps if e.get("is_video", True))
-                    for eps in entry["seasons"].values()
+                    for eps in seasons_out.values()
                 )
-                for skey in entry["seasons"]:
-                    entry["seasons"][skey].sort(key=lambda e: e["episode"])
                 result.append(
                     {
                         "folder": entry["folder"],
-                        "seasons": entry["seasons"],
+                        "seasons": seasons_out,
                         "total_episodes": total_eps,
                         "total_size": entry["total_size"],
                     }
@@ -2043,6 +2118,48 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         if not row:
             return jsonify({"progress": None})
         return jsonify({"progress": row})
+
+    # ── Watchlist ────────────────────────────────────────────────────────────
+
+    @app.route("/api/watchlist", methods=["GET"])
+    def api_get_watchlist():
+        items = get_watchlist()
+        results = [
+            {
+                "title": item["series_title"],
+                "url": item["series_url"],
+                "poster_url": item["poster_url"],
+            }
+            for item in items
+        ]
+        return jsonify({"items": results})
+
+    @app.route("/api/watchlist", methods=["POST"])
+    def api_add_to_watchlist():
+        data = request.get_json(force=True) or {}
+        series_url = (data.get("series_url") or "").strip()
+        series_title = (data.get("series_title") or "").strip()
+        poster_url = (data.get("poster_url") or "").strip()
+        if not series_url:
+            return jsonify({"error": "series_url required"}), 400
+        add_to_watchlist(series_url, series_title, poster_url)
+        return jsonify({"ok": True})
+
+    @app.route("/api/watchlist", methods=["DELETE"])
+    def api_remove_from_watchlist():
+        data = request.get_json(force=True) or {}
+        series_url = (data.get("series_url") or "").strip()
+        if not series_url:
+            return jsonify({"error": "series_url required"}), 400
+        remove_from_watchlist(series_url)
+        return jsonify({"ok": True})
+
+    @app.route("/api/watchlist/check", methods=["GET"])
+    def api_check_watchlist():
+        series_url = request.args.get("url", "").strip()
+        if not series_url:
+            return jsonify({"in_list": False})
+        return jsonify({"in_list": is_in_watchlist(series_url)})
 
     @app.route("/api/thumbnails", methods=["GET"])
     def api_thumbnails():

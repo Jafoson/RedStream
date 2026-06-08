@@ -48,6 +48,41 @@ class ApiService {
   Future<List<SeriesResult>> getNewSeries() => _fetchBrowse('/api/new-series');
   Future<List<SeriesResult>> getPopularSeries() => _fetchBrowse('/api/popular-series');
 
+  Future<String> getTmdbPoster(String title) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/tmdb-poster',
+      queryParameters: {'title': title},
+    );
+    final url = resp.data?['poster_url'] as String? ?? '';
+    return proxyImage(url); // relative /api/proxy-image?url=… → full http://host/…
+  }
+
+  Future<({List<SeriesResult> items, bool hasMore, int total, List<String> allGenres})> getAllAnimes(
+          int page, {int perPage = 50, String? genre}) =>
+      _fetchPaged('/api/all-animes', page, perPage, genre: genre);
+
+  Future<({List<SeriesResult> items, bool hasMore, int total, List<String> allGenres})> getAllSeries(
+          int page, {int perPage = 50, String? genre}) =>
+      _fetchPaged('/api/all-series', page, perPage, genre: genre);
+
+  Future<({List<SeriesResult> items, bool hasMore, int total, List<String> allGenres})> _fetchPaged(
+      String path, int page, int perPage, {String? genre}) async {
+    final params = <String, dynamic>{'page': page, 'per_page': perPage};
+    if (genre != null && genre.isNotEmpty) params['genre'] = genre;
+    final resp = await _dio.get<Map<String, dynamic>>(path, queryParameters: params);
+    final data = resp.data!;
+    final list = (data['results'] as List)
+        .map((e) => SeriesResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+    final allGenres = (data['all_genres'] as List?)?.cast<String>() ?? [];
+    return (
+      items: list,
+      hasMore: data['has_more'] as bool,
+      total: data['total'] as int,
+      allGenres: allGenres,
+    );
+  }
+
   // ── Series metadata ──────────────────────────────────────────────────────
   Future<SeriesDetail> getSeriesDetail(String url) async {
     final resp = await _dio.get<Map<String, dynamic>>(
@@ -281,6 +316,61 @@ class ApiService {
       queryParameters: {'series_title': seriesTitle, 'episode': episode},
     );
     return SkipTimes.fromJson(resp.data ?? {});
+  }
+
+  // ── Autosync ──────────────────────────────────────────────────────────────
+  /// Returns the job id if this series already has an autosync job, else null.
+  Future<int?> checkAutosync(String seriesUrl) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/autosync/check',
+      queryParameters: {'url': seriesUrl},
+    );
+    final exists = resp.data?['exists'] as bool? ?? false;
+    if (!exists) return null;
+    final job = resp.data?['job'] as Map<String, dynamic>?;
+    return job?['id'] as int?;
+  }
+
+  Future<int> addAutosync(String seriesUrl, {required String title}) async {
+    final resp = await _dio.post<Map<String, dynamic>>(
+      '/api/autosync',
+      data: {'title': title, 'series_url': seriesUrl},
+    );
+    return resp.data?['id'] as int? ?? 0;
+  }
+
+  Future<void> removeAutosync(int jobId) async {
+    await _dio.delete<void>('/api/autosync/$jobId');
+  }
+
+  // ── Watchlist ─────────────────────────────────────────────────────────────
+  Future<List<SeriesResult>> getWatchlist() async {
+    final resp = await _dio.get<Map<String, dynamic>>('/api/watchlist');
+    final list = resp.data?['items'] as List? ?? [];
+    return list
+        .map((e) => SeriesResult.fromJson(e as Map<String, dynamic>))
+        .map((r) => SeriesResult(title: r.title, url: r.url, posterUrl: proxyImage(r.posterUrl)))
+        .toList();
+  }
+
+  Future<void> addToWatchlist(String seriesUrl, {required String title, String posterUrl = ''}) async {
+    await _dio.post<void>('/api/watchlist', data: {
+      'series_url': seriesUrl,
+      'series_title': title,
+      'poster_url': posterUrl,
+    });
+  }
+
+  Future<void> removeFromWatchlist(String seriesUrl) async {
+    await _dio.delete<void>('/api/watchlist', data: {'series_url': seriesUrl});
+  }
+
+  Future<bool> isInWatchlist(String seriesUrl) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/watchlist/check',
+      queryParameters: {'url': seriesUrl},
+    );
+    return resp.data?['in_list'] as bool? ?? false;
   }
 
   // ── Settings ─────────────────────────────────────────────────────────────

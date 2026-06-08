@@ -15,6 +15,7 @@ import 'library_screen.dart';
 import 'queue_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
+import 'watchlist_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App shell — sidebar + content area + toast overlay
@@ -52,7 +53,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         builder: (_) => DetailScreen(seriesUrl: item.url, title: item.title),
       ),
     );
-    if (mounted) { _nav.attach(); }
+    if (mounted) {
+      _nav.attach();
+      ref.read(continueWatchingProvider.notifier).refresh();
+    }
   }
 
   Future<void> _openFromProgress(WatchProgress p) async {
@@ -84,17 +88,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       builder: (context, _) {
         switch (_nav.screen) {
           case NavScreen.serien:
-            return GridScreen(nav: _nav, kind: GridKind.series, onSelect: _openDetail);
+            return GridScreen(key: const ValueKey('serien'), nav: _nav, kind: GridKind.series, onSelect: _openDetail);
           case NavScreen.anime:
-            return GridScreen(nav: _nav, kind: GridKind.anime, onSelect: _openDetail);
+            return GridScreen(key: const ValueKey('anime'), nav: _nav, kind: GridKind.anime, onSelect: _openDetail);
           case NavScreen.search:
             return SearchScreen(nav: _nav, onSelect: _openDetail);
           case NavScreen.queue:
-            return const QueueScreen();
+            return QueueScreen(nav: _nav);
           case NavScreen.library:
-            return const LibraryScreen();
+            return LibraryScreen(nav: _nav);
+          case NavScreen.watchlist:
+            return WatchlistScreen(nav: _nav, onSelect: _openDetail);
           case NavScreen.settings:
-            return const SettingsScreen();
+            return SettingsScreen(nav: _nav);
           case NavScreen.home:
             return _HomeContent(
               nav: _nav,
@@ -185,16 +191,18 @@ class _HomeContent extends ConsumerStatefulWidget {
 
 class _HomeContentState extends ConsumerState<_HomeContent> {
   final _scrollCtrl = ScrollController();
-  // One key per possible row: continue + 4 browse rails = 5 max.
-  final _rowKeys = List.generate(5, (_) => GlobalKey());
-  // Tracks which row we last scrolled to so provider rebuilds don't
-  // keep re-triggering ensureVisible while the user is navigating.
+  // Keyed by nav-row index so ensureVisible works regardless of which rails
+  // are currently visible (continue/watchlist/browse can each be absent).
+  final _rowKeys = <int, GlobalKey>{};
   int _lastScrollRow = -1;
 
   @override
   void initState() {
     super.initState();
     widget.nav.addListener(_onNavChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(continueWatchingProvider.notifier).refresh();
+    });
   }
 
   @override
@@ -226,8 +234,7 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
       );
       return;
     }
-    final clampedRow = row.clamp(0, _rowKeys.length - 1);
-    final ctx = _rowKeys[clampedRow].currentContext;
+    final ctx = _rowKeys[row]?.currentContext;
     if (ctx == null) { return; }
     Scrollable.ensureVisible(
       ctx,
@@ -241,8 +248,12 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
   Widget build(BuildContext context) {
     final state = ref.watch(browseProvider);
     final continueState = ref.watch(continueWatchingProvider);
+    final watchlistState = ref.watch(watchlistProvider);
+
     final continueItems = continueState.items;
     final hasContinue = continueItems.isNotEmpty;
+    final watchlistItems = watchlistState.valueOrNull ?? [];
+    final hasWatchlist = watchlistItems.isNotEmpty;
 
     if (state.loading && state.newAnimes.isEmpty && state.newSeries.isEmpty) {
       return const Center(
@@ -264,28 +275,34 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
       state.popularSeries,
     ];
 
-    final offset = hasContinue ? 1 : 0;
+    // Nav row layout:
+    //   row 0              : continue watching (if present)
+    //   row continueOff    : meine liste (if present)
+    //   row browseOff + i  : browse rails
+    final continueOff = hasContinue ? 1 : 0;
+    final watchlistNavRow = continueOff;
+    final browseOff = continueOff + (hasWatchlist ? 1 : 0);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) { return; }
       final rowLengths = [
         if (hasContinue) continueItems.length,
+        if (hasWatchlist) watchlistItems.length,
         ...browseRows.map((r) => r.isEmpty ? 1 : r.length),
       ];
       widget.nav.registerNav(rowLengths, (row, col) {
+        var r = row;
         if (hasContinue) {
-          if (row == 0) {
-            widget.onContinue(continueItems[col]);
-            return;
-          }
-          final br = browseRows[row - 1];
-          if (br.isNotEmpty) { widget.onSelect(br[col]); }
-        } else {
-          if (browseRows[row].isNotEmpty) { widget.onSelect(browseRows[row][col]); }
+          if (r == 0) { widget.onContinue(continueItems[col]); return; }
+          r--;
         }
+        if (hasWatchlist) {
+          if (r == 0) { widget.onSelect(watchlistItems[col]); return; }
+          r--;
+        }
+        final br = browseRows[r];
+        if (br.isNotEmpty) { widget.onSelect(br[col]); }
       });
-      // Scroll to restored position on first mount; skipped on provider
-      // rebuilds if the row hasn't changed (guarded by _lastScrollRow).
       _scrollToRow(widget.nav.contentRow);
     });
 
@@ -378,7 +395,7 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
 
           if (hasContinue)
             KeyedSubtree(
-              key: _rowKeys[0],
+              key: _rowKeys.putIfAbsent(0, GlobalKey.new),
               child: _ContinueRail(
                 items: continueItems,
                 nav: widget.nav,
@@ -386,13 +403,25 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
                 onSelect: widget.onContinue,
               ),
             ),
+          if (hasWatchlist)
+            KeyedSubtree(
+              key: _rowKeys.putIfAbsent(watchlistNavRow, GlobalKey.new),
+              child: RsRail(
+                title: 'Meine Liste',
+                linkLabel: 'Alle',
+                rowIndex: watchlistNavRow,
+                items: watchlistItems,
+                nav: widget.nav,
+                onSelect: widget.onSelect,
+              ),
+            ),
           if (state.newAnimes.isNotEmpty)
             KeyedSubtree(
-              key: _rowKeys[offset + 0],
+              key: _rowKeys.putIfAbsent(browseOff + 0, GlobalKey.new),
               child: RsRail(
                 title: 'Neue Anime',
                 linkLabel: 'Alle',
-                rowIndex: offset + 0,
+                rowIndex: browseOff + 0,
                 items: state.newAnimes,
                 nav: widget.nav,
                 onSelect: widget.onSelect,
@@ -400,10 +429,10 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
             ),
           if (state.popularAnimes.isNotEmpty)
             KeyedSubtree(
-              key: _rowKeys[offset + 1],
+              key: _rowKeys.putIfAbsent(browseOff + 1, GlobalKey.new),
               child: RsRail(
                 title: 'Beliebte Anime',
-                rowIndex: offset + 1,
+                rowIndex: browseOff + 1,
                 items: state.popularAnimes,
                 nav: widget.nav,
                 onSelect: widget.onSelect,
@@ -411,11 +440,11 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
             ),
           if (state.newSeries.isNotEmpty)
             KeyedSubtree(
-              key: _rowKeys[offset + 2],
+              key: _rowKeys.putIfAbsent(browseOff + 2, GlobalKey.new),
               child: RsRail(
                 title: 'Neue Serien',
                 linkLabel: 'Alle',
-                rowIndex: offset + 2,
+                rowIndex: browseOff + 2,
                 items: state.newSeries,
                 nav: widget.nav,
                 onSelect: widget.onSelect,
@@ -423,10 +452,10 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
             ),
           if (state.popularSeries.isNotEmpty)
             KeyedSubtree(
-              key: _rowKeys[offset + 3],
+              key: _rowKeys.putIfAbsent(browseOff + 3, GlobalKey.new),
               child: RsRail(
                 title: 'Beliebte Serien',
-                rowIndex: offset + 3,
+                rowIndex: browseOff + 3,
                 items: state.popularSeries,
                 nav: widget.nav,
                 onSelect: widget.onSelect,
@@ -504,7 +533,7 @@ class _ContinueRailState extends State<_ContinueRail> {
           ),
         ),
         SizedBox(
-          height: Rs.cwH + 16,
+          height: Rs.cwH + 36,
           child: ListenableBuilder(
             listenable: widget.nav,
             builder: (_, _) {
@@ -518,8 +547,9 @@ class _ContinueRailState extends State<_ContinueRail> {
               return ListView.builder(
                 controller: _scrollCtrl,
                 scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.none,
                 physics: const NeverScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(_hPad, 8, _hPad, 8),
+                padding: const EdgeInsets.fromLTRB(_hPad, 18, _hPad, 18),
                 itemCount: widget.items.length,
                 itemBuilder: (context, i) {
                   final p = widget.items[i];

@@ -1,7 +1,7 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 
-enum NavScreen { home, serien, anime, search, queue, library, settings }
+enum NavScreen { home, serien, anime, search, queue, library, watchlist, settings }
 
 /// Central D-Pad navigation controller — mirrors the HTML prototype's
 /// custom focus engine (region/row/col model).
@@ -24,7 +24,7 @@ class AppNavController extends ChangeNotifier {
   // Cleared when switching screens so each screen starts fresh.
   final _rowCols = <int, int>{};
 
-  static const _sidebarCount = 7;
+  static const _sidebarCount = 8;
   static const _navScreens = [
     NavScreen.home,
     NavScreen.serien,
@@ -32,6 +32,7 @@ class AppNavController extends ChangeNotifier {
     NavScreen.search,
     NavScreen.queue,
     NavScreen.library,
+    NavScreen.watchlist,
     NavScreen.settings,
   ];
 
@@ -42,6 +43,11 @@ class AppNavController extends ChangeNotifier {
   // focus/traversal system can redirect D-pad presses to a ListView.
 
   bool _attached = false;
+
+  /// When true the key handler returns false for everything, letting Flutter's
+  /// built-in focus / text-editing handle all input (used while a TextField
+  /// has focus on the search screen).
+  bool textInputActive = false;
 
   void attach() {
     if (_attached) { return; }
@@ -59,12 +65,30 @@ class AppNavController extends ChangeNotifier {
     if (!_attached) { return false; }
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) { return false; }
     final key = event.logicalKey;
+
+    if (textInputActive) {
+      // Up/Down escape from the text field back into D-pad navigation.
+      if (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.arrowDown) {
+        FocusManager.instance.primaryFocus?.unfocus();
+        textInputActive = false;
+        handleKeyEvent(event);
+        return true;
+      }
+      return false; // left/right/enter/chars stay in the text field
+    }
+
     // Only consume navigation keys — let letters/digits pass through (search).
     if (key != LogicalKeyboardKey.arrowUp &&
         key != LogicalKeyboardKey.arrowDown &&
         key != LogicalKeyboardKey.arrowLeft &&
         key != LogicalKeyboardKey.arrowRight &&
         !_isConfirm(key)) { return false; }
+
+    // Don't consume nav keys when no content rows are registered and the
+    // sidebar isn't focused — this lets text fields in unregistered screens
+    // (settings) use arrow keys normally for cursor movement.
+    if (!sidebarFocused && _rowLengths.isEmpty) { return false; }
+
     handleKeyEvent(event);
     return true; // consumed — prevents ListView scroll / focus traversal
   }

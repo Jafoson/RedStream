@@ -147,10 +147,11 @@ const _menuItems = [
 const _libItems = [
   _NavItem(Icons.download_rounded, 'Downloads', NavScreen.queue, 4),
   _NavItem(Icons.video_library_rounded, 'Bibliothek', NavScreen.library, 5),
+  _NavItem(Icons.bookmark_rounded, 'Meine Liste', NavScreen.watchlist, 6),
 ];
 
 const _genItems = [
-  _NavItem(Icons.settings_rounded, 'Einstellungen', NavScreen.settings, 6),
+  _NavItem(Icons.settings_rounded, 'Einstellungen', NavScreen.settings, 7),
 ];
 
 class _NavTile extends StatelessWidget {

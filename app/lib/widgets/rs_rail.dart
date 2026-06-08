@@ -116,12 +116,16 @@ class _RsRailState extends State<RsRail> {
               ),
             ),
             // Scrollable card track
+            // Extra vertical padding (18px each side) absorbs the 1.05–1.07× focus
+            // scale so the enlarged card doesn't overflow the SizedBox.
+            // clipBehavior: none lets the border/shadow render past the list edges.
             SizedBox(
-              height: widget.isContinue ? Rs.cwH + 16 : Rs.cardH + 16,
+              height: widget.isContinue ? Rs.cwH + 36 : Rs.cardH + 36,
               child: ListView.builder(
                 controller: _scrollCtrl,
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.fromLTRB(_hPad, 8, _hPad, 8),
+                clipBehavior: Clip.none,
+                padding: const EdgeInsets.fromLTRB(_hPad, 18, _hPad, 18),
                 itemCount: widget.items.length,
                 itemBuilder: (context, i) {
                   final focused = focusedCol == i;

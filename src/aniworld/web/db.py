@@ -633,6 +633,7 @@ CREATE TABLE IF NOT EXISTS autosync_jobs (
     last_check TEXT,
     last_new_found TEXT,
     episodes_found INTEGER NOT NULL DEFAULT 0,
+    episodes_queued_up_to INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -643,6 +644,15 @@ def init_autosync_db():
     conn = get_db()
     try:
         conn.execute(_CREATE_AUTOSYNC_TABLE)
+        # Migrate: add episodes_queued_up_to column if missing
+        try:
+            conn.execute(
+                "ALTER TABLE autosync_jobs ADD COLUMN "
+                "episodes_queued_up_to INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.commit()
+        except Exception:
+            pass
         # Add UNIQUE index on series_url (migration for existing DBs)
         try:
             conn.execute(
@@ -735,6 +745,7 @@ def update_autosync_job(job_id, **fields):
         "last_check",
         "last_new_found",
         "episodes_found",
+        "episodes_queued_up_to",
     }
     filtered = {k: v for k, v in fields.items() if k in allowed}
     if not filtered:
@@ -878,6 +889,20 @@ def get_episode_progress_for_urls(episode_urls):
         conn.close()
 
 
+def get_watch_progress_for_series(series_url):
+    """Return all watch_progress rows for a given series_url, ordered by season/episode."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM watch_progress WHERE series_url = ? "
+            "ORDER BY season, episode_number",
+            (series_url,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def get_all_watch_progress(limit=50):
     conn = get_db()
     try:
@@ -964,6 +989,75 @@ def get_queue_stats():
             "by_status": by_status,
             "currently_running": dict(running) if running else None,
         }
+    finally:
+        conn.close()
+
+
+# ===== Watchlist =====
+
+_CREATE_WATCHLIST_TABLE = """\
+CREATE TABLE IF NOT EXISTS watchlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    series_url TEXT NOT NULL UNIQUE,
+    series_title TEXT NOT NULL,
+    poster_url TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+
+def init_watchlist_db():
+    ANIWORLD_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    conn = get_db()
+    try:
+        conn.execute(_CREATE_WATCHLIST_TABLE)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_to_watchlist(series_url, series_title, poster_url=""):
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO watchlist (series_url, series_title, poster_url) "
+            "VALUES (?, ?, ?)",
+            (series_url, series_title, poster_url),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_from_watchlist(series_url):
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM watchlist WHERE series_url = ?", (series_url,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_watchlist():
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT series_url, series_title, poster_url, added_at "
+            "FROM watchlist ORDER BY added_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def is_in_watchlist(series_url):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM watchlist WHERE series_url = ?",
+            (series_url,),
+        ).fetchone()
+        return row["cnt"] > 0
     finally:
         conn.close()
 

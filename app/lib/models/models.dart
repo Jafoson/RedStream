@@ -6,13 +6,20 @@ class SeriesResult {
   final String title;
   final String url;
   final String posterUrl;
+  final List<String> genres;
 
-  const SeriesResult({required this.title, required this.url, required this.posterUrl});
+  const SeriesResult({
+    required this.title,
+    required this.url,
+    required this.posterUrl,
+    this.genres = const [],
+  });
 
   factory SeriesResult.fromJson(Map<String, dynamic> j) => SeriesResult(
         title: j['title'] as String? ?? '',
         url: j['url'] as String? ?? '',
         posterUrl: j['poster_url'] as String? ?? '',
+        genres: (j['genres'] as List?)?.cast<String>() ?? [],
       );
 }
 

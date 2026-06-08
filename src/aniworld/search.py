@@ -3,6 +3,8 @@ import html as html_module
 import os
 import random
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     from .ascii import display_ascii_art
@@ -176,9 +178,9 @@ def _extract_cover_list(html, heading):
             continue
         seen_urls.add(url)
 
-        # Title from <h3> (strip inner tags)
+        # Title from <h3> (strip inner tags, decode HTML entities)
         h3_match = re.search(r"<h3>(.*?)</h3>", inner, re.DOTALL)
-        title = (
+        title = html_module.unescape(
             re.sub(r"<[^>]+>", "", h3_match.group(1)).strip()
             if h3_match
             else link_title
@@ -391,6 +393,215 @@ def fetch_popular_series():
         heading_hints=[r"Meistgesehen", r"Beliebt", r"\U0001f525"],
         fallback_index=1,
     )
+
+
+_all_animes_cache = None
+_all_series_cache = None
+
+# Known genres on s.to — display name → URL slug
+SERIES_GENRES = {
+    "Abenteuer": "abenteuer",
+    "Action": "action",
+    "Drama": "drama",
+    "Fantasy": "fantasy",
+    "Horror": "horror",
+    "K-Drama": "k-drama",
+    "Krimi": "krimi",
+    "Mystery": "mystery",
+    "Science Fiction": "science-fiction",
+    "Sitcom": "sitcom",
+    "Thriller": "thriller",
+}
+
+_series_genre_slug_cache: dict[str, set] = {}  # display_name → set of s.to series slugs
+_series_genre_lock = threading.Lock()
+
+
+def fetch_series_genre_slugs(genre_name: str) -> set:
+    """Return the set of s.to series slugs that belong to genre_name.
+
+    Fetches all paginated genre pages from s.to and caches the result.
+    """
+    if genre_name in _series_genre_slug_cache:
+        return _series_genre_slug_cache[genre_name]
+
+    url_slug = SERIES_GENRES.get(genre_name)
+    if not url_slug:
+        return set()
+
+    all_slugs: set = set()
+    page = 1
+    while True:
+        url = (
+            f"https://s.to/genre/{url_slug}"
+            if page == 1
+            else f"https://s.to/genre/{url_slug}?page={page}"
+        )
+        try:
+            r = GLOBAL_SESSION.get(url, timeout=15)
+            page_slugs = set(re.findall(r'href="/serie/([^/"]+)"', r.text))
+            new = page_slugs - all_slugs
+            if not new:
+                break
+            all_slugs.update(new)
+            if len(new) < 5:
+                break
+            page += 1
+        except Exception as e:
+            logger.warning(f"Failed to fetch genre page {url}: {e}")
+            break
+
+    with _series_genre_lock:
+        _series_genre_slug_cache[genre_name] = all_slugs
+    return all_slugs
+
+
+def prewarm_series_genres():
+    """Fetch all s.to genre pages in the background so filters are fast on first use."""
+    def _worker(genre_name):
+        if genre_name not in _series_genre_slug_cache:
+            fetch_series_genre_slugs(genre_name)
+
+    def _run():
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futures = {ex.submit(_worker, g): g for g in SERIES_GENRES}
+            for f in as_completed(futures):
+                genre = futures[f]
+                try:
+                    f.result()
+                    logger.debug(f"Prewarmed genre: {genre} ({len(_series_genre_slug_cache.get(genre, set()))} slugs)")
+                except Exception as e:
+                    logger.warning(f"Prewarm failed for {genre}: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def fetch_all_animes():
+    """Fetch the complete anime list from aniworld.to/animes, sorted alphabetically.
+
+    Returns a list of dicts with title, url, poster_url, or None on error.
+    Caches the result in-memory for the lifetime of the process.
+    """
+    global _all_animes_cache
+    if _all_animes_cache is not None:
+        return _all_animes_cache
+
+    try:
+        response = GLOBAL_SESSION.get("https://aniworld.to/animes", timeout=30)
+        response.raise_for_status()
+        html = response.text
+    except Exception as e:
+        logger.error(f"Failed to fetch all animes: {e}")
+        return None
+
+    # Build slug → genres map from genre sections
+    slug_genres: dict = {}
+    genre_section_re = re.compile(
+        r'<div[^>]*class="[^"]*\bgenre\b[^"]*"[^>]*>.*?'
+        r'<h3[^>]*>([^<]+)</h3>.*?'
+        r'<ul[^>]*>(.*?)</ul>',
+        re.DOTALL,
+    )
+    for gm in genre_section_re.finditer(html):
+        genre_name = html_module.unescape(gm.group(1).strip())
+        for sm in re.finditer(r'href="/anime/stream/([^/"]+)"', gm.group(2)):
+            slug = sm.group(1)
+            slug_genres.setdefault(slug, [])
+            if genre_name not in slug_genres[slug]:
+                slug_genres[slug].append(genre_name)
+
+    pattern = re.compile(
+        r'href="/anime/stream/([^"]+)"[^>]*>\s*([^<]+?)\s*</a>',
+    )
+    seen = set()
+    results = []
+    for m in pattern.finditer(html):
+        slug = m.group(1).strip().split("/")[0]
+        title = html_module.unescape(m.group(2).strip())
+        url = f"https://aniworld.to/anime/stream/{slug}"
+        if url not in seen and title:
+            seen.add(url)
+            results.append({
+                "title": title,
+                "url": url,
+                "poster_url": "",
+                "genres": sorted(slug_genres.get(slug, [])),
+            })
+
+    def _sort_key(item):
+        t = item["title"]
+        first = t[0].upper() if t else ""
+        # A-Z titles first, then numbers/special chars (#)
+        return (0, t.lower()) if "A" <= first <= "Z" else (1, t.lower())
+
+    results.sort(key=_sort_key)
+    _all_animes_cache = results
+    return results
+
+
+def fetch_all_series():
+    """Fetch the complete series list from s.to/serien, sorted alphabetically.
+
+    Returns a list of dicts with title, url, poster_url, or None on error.
+    Caches the result in-memory for the lifetime of the process.
+    """
+    global _all_series_cache
+    if _all_series_cache is not None:
+        return _all_series_cache
+
+    try:
+        response = GLOBAL_SESSION.get("https://s.to/serien", timeout=30)
+        response.raise_for_status()
+        html = response.text
+    except Exception as e:
+        logger.error(f"Failed to fetch all series: {e}")
+        return None
+
+    # Build slug → genres map from genre sections (same structure as aniworld.to)
+    slug_genres: dict = {}
+    genre_section_re = re.compile(
+        r'<div[^>]*class="[^"]*\bgenre\b[^"]*"[^>]*>.*?'
+        r'<h3[^>]*>([^<]+)</h3>.*?'
+        r'<ul[^>]*>(.*?)</ul>',
+        re.DOTALL,
+    )
+    for gm in genre_section_re.finditer(html):
+        genre_name = html_module.unescape(gm.group(1).strip())
+        for sm in re.finditer(r'href="/serie/([^/"]+)"', gm.group(2)):
+            slug = sm.group(1)
+            slug_genres.setdefault(slug, [])
+            if genre_name not in slug_genres[slug]:
+                slug_genres[slug].append(genre_name)
+
+    pattern = re.compile(
+        r'href="/serie/([^"]+)"[^>]*>\s*([^<]+?)\s*</a>',
+    )
+    seen = set()
+    results = []
+    for m in pattern.finditer(html):
+        slug = m.group(1).strip().split("/")[0]
+        title = html_module.unescape(m.group(2).strip())
+        url = f"https://s.to/serie/{slug}"
+        if url not in seen and title:
+            seen.add(url)
+            results.append({
+                "title": title,
+                "url": url,
+                "poster_url": "",
+                "genres": sorted(slug_genres.get(slug, [])),
+            })
+
+    def _sort_key(item):
+        t = item["title"]
+        first = t[0].upper() if t else ""
+        # A-Z titles first, then numbers/special chars (#)
+        return (0, t.lower()) if "A" <= first <= "Z" else (1, t.lower())
+
+    results.sort(key=_sort_key)
+    _all_series_cache = results
+    # Pre-fetch genre pages in background so genre filters are fast when the user picks one
+    prewarm_series_genres()
+    return results
 
 
 def _curses_menu(stdscr, options):

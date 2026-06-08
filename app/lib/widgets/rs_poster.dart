@@ -12,6 +12,7 @@ class RsPosterCard extends StatelessWidget {
   final bool focused;
   final VoidCallback? onTap;
   final bool inGrid;
+  final double? progressFraction;
 
   const RsPosterCard({
     super.key,
@@ -19,6 +20,7 @@ class RsPosterCard extends StatelessWidget {
     required this.focused,
     this.onTap,
     this.inGrid = false,
+    this.progressFraction,
   });
 
   @override
@@ -88,6 +90,20 @@ class RsPosterCard extends StatelessWidget {
                     ),
                   ),
                 ),
+                // Watch-progress bar (shown when partially watched)
+                if (progressFraction != null && progressFraction! > 0)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: LinearProgressIndicator(
+                      value: progressFraction,
+                      backgroundColor: Colors.white24,
+                      valueColor:
+                          const AlwaysStoppedAnimation<Color>(Rs.accent),
+                      minHeight: 4,
+                    ),
+                  ),
                 // Title info at bottom
                 Positioned(
                   left: 15,

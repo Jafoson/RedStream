@@ -36,6 +36,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   String? _error;
   WatchProgress? _resumeProgress;
   bool _resumeIsNextEp = false;
+  bool _inWatchlist = false;
+  int? _autosyncJobId;
 
   @override
   void initState() {
@@ -74,6 +76,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         api.getSeriesDetail(widget.seriesUrl),
         api.getSeasons(widget.seriesUrl),
         api.getAllProgress(limit: 100),
+        api.isInWatchlist(widget.seriesUrl).catchError((_) => false),
+        api.checkAutosync(widget.seriesUrl).then<int?>((v) => v).catchError((_) => null as int?),
       ]);
       if (!mounted) return;
       final allProgress = results[2] as List<WatchProgress>;
@@ -81,12 +85,61 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
       setState(() {
         _detail = results[0] as SeriesDetail;
         _seasons = results[1] as List<Season>;
+        _inWatchlist = results[3] as bool;
+        _autosyncJobId = results[4] as int?;
         _loading = false;
       });
       if (_seasons.isNotEmpty) _loadEpisodes(_seasons[0], prefetch: true);
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
+  }
+
+  Future<void> _toggleWatchlist() async {
+    final api = ref.read(apiServiceProvider);
+    final title = _detail?.title ?? widget.title;
+    try {
+      if (_inWatchlist) {
+        await api.removeFromWatchlist(widget.seriesUrl);
+        if (mounted) setState(() => _inWatchlist = false);
+        if (_autosyncJobId case final id?) {
+          try { await api.removeAutosync(id); } catch (_) {}
+          if (mounted) setState(() => _autosyncJobId = null);
+        }
+      } else {
+        await api.addToWatchlist(
+          widget.seriesUrl,
+          title: title,
+          posterUrl: _detail?.posterUrl ?? '',
+        );
+        if (mounted) setState(() => _inWatchlist = true);
+        if (_autosyncJobId == null) {
+          try {
+            final id = await api.addAutosync(widget.seriesUrl, title: title);
+            if (mounted) setState(() => _autosyncJobId = id);
+          } catch (_) {}
+        }
+      }
+      ref.read(watchlistProvider.notifier).refresh();
+    } catch (_) {}
+  }
+
+  Future<void> _ensureInWatchlist() async {
+    if (_inWatchlist) return;
+    final api = ref.read(apiServiceProvider);
+    final title = _detail?.title ?? widget.title;
+    final poster = _detail?.posterUrl ?? '';
+    try {
+      await api.addToWatchlist(widget.seriesUrl, title: title, posterUrl: poster);
+      if (mounted) setState(() => _inWatchlist = true);
+    } catch (_) {}
+    if (_autosyncJobId == null) {
+      try {
+        final id = await api.addAutosync(widget.seriesUrl, title: title);
+        if (mounted) setState(() => _autosyncJobId = id);
+      } catch (_) {}
+    }
+    ref.read(watchlistProvider.notifier).refresh();
   }
 
   Future<void> _loadEpisodes(Season season, {bool prefetch = false}) async {
@@ -164,6 +217,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   }
 
   void _playEpisode(Episode ep) {
+    _ensureInWatchlist();
     final api = ref.read(apiServiceProvider);
     Navigator.of(context)
         .push(MaterialPageRoute(
@@ -266,6 +320,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                     onPlayEpisode: _playEpisode,
                     onPlay: _playFirstEpisode,
                     onResume: _playFromResume,
+                    inWatchlist: _inWatchlist,
+                    onToggleWatchlist: _toggleWatchlist,
                   ),
       ),
     );
@@ -289,6 +345,8 @@ class _DetailBody extends StatelessWidget {
   final void Function(Episode ep) onPlayEpisode;
   final VoidCallback onPlay;
   final VoidCallback onResume;
+  final bool inWatchlist;
+  final VoidCallback onToggleWatchlist;
 
   const _DetailBody({
     required this.detail,
@@ -303,6 +361,8 @@ class _DetailBody extends StatelessWidget {
     required this.onPlayEpisode,
     required this.onPlay,
     required this.onResume,
+    required this.inWatchlist,
+    required this.onToggleWatchlist,
   });
 
   @override
@@ -318,6 +378,8 @@ class _DetailBody extends StatelessWidget {
           resumeProgress: resumeProgress,
           resumeIsNextEp: resumeIsNextEp,
           onResume: onResume,
+          inWatchlist: inWatchlist,
+          onToggleWatchlist: onToggleWatchlist,
         ),
 
         // ── Season tabs ─────────────────────────────────────────────────────
@@ -366,6 +428,8 @@ class _HeroSection extends StatelessWidget {
   final WatchProgress? resumeProgress;
   final bool resumeIsNextEp;
   final VoidCallback onResume;
+  final bool inWatchlist;
+  final VoidCallback onToggleWatchlist;
 
   const _HeroSection({
     required this.detail,
@@ -374,6 +438,8 @@ class _HeroSection extends StatelessWidget {
     this.resumeProgress,
     this.resumeIsNextEp = false,
     required this.onResume,
+    required this.inWatchlist,
+    required this.onToggleWatchlist,
   });
 
   @override
@@ -579,25 +645,41 @@ class _HeroSection extends StatelessWidget {
                       ),
                     if (resumeProgress != null) const SizedBox(width: 12),
                     TvFocusable(
-                      onActivate: () {},
+                      onActivate: onToggleWatchlist,
                       borderRadius: BorderRadius.circular(14),
-                      child: Container(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
                         height: 52,
                         padding: const EdgeInsets.symmetric(horizontal: 28),
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.12),
+                          color: inWatchlist
+                              ? Rs.accent.withValues(alpha: 0.22)
+                              : Colors.white.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: Rs.line2),
+                          border: Border.all(
+                            color: inWatchlist ? Rs.accent : Rs.line2,
+                            width: inWatchlist ? 2 : 1,
+                          ),
                         ),
-                        child: const Row(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.add_rounded, color: Colors.white, size: 22),
-                            SizedBox(width: 8),
-                            Text('Meine Liste',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 17)),
+                            Icon(
+                              inWatchlist
+                                  ? Icons.bookmark_rounded
+                                  : Icons.bookmark_border_rounded,
+                              color: inWatchlist ? Rs.accent : Colors.white,
+                              size: 22,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              inWatchlist ? 'In meiner Liste' : 'Meine Liste',
+                              style: TextStyle(
+                                color: inWatchlist ? Rs.accent : Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 17,
+                              ),
+                            ),
                           ],
                         ),
                       ),

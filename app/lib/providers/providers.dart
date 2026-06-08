@@ -136,7 +136,7 @@ class SearchState {
 
   const SearchState({
     this.query = '',
-    this.site = 'aniworld',
+    this.site = 'both',
     this.results = const [],
     this.loading = false,
     this.error,
@@ -183,7 +183,23 @@ class SearchNotifier extends StateNotifier<SearchState> {
     state = state.copyWith(loading: true);
     _debounce = Timer(const Duration(milliseconds: 400), () async {
       try {
-        final results = await _api.search(query.trim(), site: state.site);
+        final List<SeriesResult> results;
+        if (state.site == 'both') {
+          // Search aniworld + s.to in parallel; aniworld takes priority on duplicates
+          final pair = await Future.wait([
+            _api.search(query.trim(), site: 'aniworld'),
+            _api.search(query.trim(), site: 'sto'),
+          ]);
+          final seen = <String>{};
+          final merged = <SeriesResult>[];
+          for (final r in [...pair[0], ...pair[1]]) {
+            final key = r.title.trim().toLowerCase();
+            if (seen.add(key)) merged.add(r);
+          }
+          results = merged;
+        } else {
+          results = await _api.search(query.trim(), site: state.site);
+        }
         state = state.copyWith(results: results, loading: false);
       } catch (e) {
         state = state.copyWith(loading: false, error: e.toString());
@@ -328,6 +344,34 @@ class ContinueWatchingNotifier extends StateNotifier<ContinueWatchingState> {
   }
 
   Future<void> refresh() => _load();
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist
+// ---------------------------------------------------------------------------
+
+final watchlistProvider =
+    StateNotifierProvider<WatchlistNotifier, AsyncValue<List<SeriesResult>>>(
+        (ref) => WatchlistNotifier(ref.watch(apiServiceProvider)));
+
+class WatchlistNotifier extends StateNotifier<AsyncValue<List<SeriesResult>>> {
+  final ApiService _api;
+
+  WatchlistNotifier(this._api) : super(const AsyncValue.loading()) {
+    load();
+  }
+
+  Future<void> load() async {
+    state = const AsyncValue.loading();
+    try {
+      final items = await _api.getWatchlist();
+      state = AsyncValue.data(items);
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  Future<void> refresh() => load();
 }
 
 // ---------------------------------------------------------------------------
