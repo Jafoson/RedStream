@@ -44,7 +44,7 @@ mkdir -p ~/redstream && cd ~/redstream
 ### 2. Download the Compose file
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/phoenixthrush/AniWorld-Downloader/models/docker-compose.yaml \
+curl -fsSL https://raw.githubusercontent.com/Jafoson/AniWorld-Downloader/models/docker-compose.yaml \
   -o docker-compose.yaml
 ```
 

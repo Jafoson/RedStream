@@ -1,6 +1,6 @@
 services:
   redstream:
-    image: ghcr.io/phoenixthrush/aniworld-downloader:latest
+    image: ghcr.io/jafoson/aniworld-downloader:latest
     # build: .                     # uncomment to build from source instead
     container_name: redstream
     ports:
