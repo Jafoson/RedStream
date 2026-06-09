@@ -18,8 +18,10 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final _hostCtrl = TextEditingController();
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
+  final _hostFocus = FocusNode();
   final _userFocus = FocusNode();
   final _passFocus = FocusNode();
   bool _loading = false;
@@ -27,23 +29,38 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscure = true;
 
   @override
+  void initState() {
+    super.initState();
+    // Pre-fill with saved server URL
+    _hostCtrl.text = ref.read(serverUrlProvider);
+  }
+
+  @override
   void dispose() {
+    _hostCtrl.dispose();
     _userCtrl.dispose();
     _passCtrl.dispose();
+    _hostFocus.dispose();
     _userFocus.dispose();
     _passFocus.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
+    final host = _hostCtrl.text.trim();
     final username = _userCtrl.text.trim();
     final password = _passCtrl.text;
+    if (host.isEmpty) {
+      setState(() => _error = 'Bitte Server-URL eingeben.');
+      return;
+    }
     if (username.isEmpty || password.isEmpty) {
       setState(() => _error = 'Bitte Benutzername und Passwort eingeben.');
       return;
     }
     setState(() { _loading = true; _error = null; });
     try {
+      await ref.read(serverUrlProvider.notifier).setUrl(host);
       final serverUrl = ref.read(serverUrlProvider);
       final api = ApiService(serverUrl);
       final Map<String, String> result;
@@ -117,21 +134,49 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 style: const TextStyle(fontSize: 15, color: Rs.muted),
               ),
               const SizedBox(height: 32),
+              // Server URL field
+              _FieldLabel('Server-URL'),
+              const SizedBox(height: 8),
+              Focus(
+                onKeyEvent: (node, event) {
+                  if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                    _userFocus.requestFocus();
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: TextField(
+                  controller: _hostCtrl,
+                  focusNode: _hostFocus,
+                  autofocus: true,
+                  keyboardType: TextInputType.url,
+                  textInputAction: TextInputAction.next,
+                  style: const TextStyle(color: Rs.text, fontSize: 17),
+                  decoration: _inputDeco('http://192.168.1.x:8080'),
+                  onSubmitted: (_) => _userFocus.requestFocus(),
+                ),
+              ),
+              const SizedBox(height: 20),
               // Username field
               _FieldLabel('Benutzername'),
               const SizedBox(height: 8),
               Focus(
                 onKeyEvent: (node, event) {
-                  if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowDown) {
-                    _passFocus.requestFocus();
-                    return KeyEventResult.handled;
+                  if (event is KeyDownEvent) {
+                    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                      _passFocus.requestFocus();
+                      return KeyEventResult.handled;
+                    }
+                    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                      _hostFocus.requestFocus();
+                      return KeyEventResult.handled;
+                    }
                   }
                   return KeyEventResult.ignored;
                 },
                 child: TextField(
                   controller: _userCtrl,
                   focusNode: _userFocus,
-                  autofocus: true,
                   textInputAction: TextInputAction.next,
                   style: const TextStyle(color: Rs.text, fontSize: 17),
                   decoration: _inputDeco('Benutzername eingeben'),
