@@ -4,8 +4,6 @@ Base URL: `http://localhost:8080` (default)
 
 ## Authentication
 
-By default the API requires **no authentication** — all endpoints are publicly accessible.
-
 Authentication is opt-in via environment variable:
 
 ```bash
@@ -14,8 +12,92 @@ ANIWORLD_WEB_SSO=1       # OIDC / SSO login (implies auth)
 ANIWORLD_WEB_FORCE_SSO=1 # SSO only, local login disabled
 ```
 
-When auth is enabled every endpoint requires a valid session (`login_required`).  
-A subset of endpoints additionally requires the **admin** role (see table below).
+When auth is enabled every endpoint requires either a valid **Flask session** (browser) or a **Bearer token** (API clients / Flutter app). A subset of endpoints additionally requires the **admin** role (see table below).
+
+### Bearer Token Flow
+
+```
+GET  /api/auth/check   → { auth_enabled, setup_needed }
+POST /api/auth/setup   → { token, username, role }   (first-run only, creates admin)
+POST /api/auth/login   → { token, username, role }
+GET  /api/auth/me      → { id, username, role }
+POST /api/auth/logout  → { ok: true }
+```
+
+Include the token on every subsequent request:
+
+```
+Authorization: Bearer <token>
+```
+
+All `/api/auth/*` endpoints are **public** (no auth required). All other `/api/*` endpoints require auth when `ANIWORLD_WEB_AUTH=1`.
+
+---
+
+## Auth Endpoints
+
+### Check auth status
+```
+GET /api/auth/check
+```
+Always accessible (no auth required).
+
+Response:
+```json
+{ "auth_enabled": true, "setup_needed": false }
+```
+`setup_needed: true` means no admin account exists yet — call `/api/auth/setup` next.
+
+---
+
+### Create first admin *(setup_needed only)*
+```
+POST /api/auth/setup
+```
+Returns 409 if an admin already exists.
+
+Body:
+```json
+{ "username": "admin", "password": "yourpassword" }
+```
+Response:
+```json
+{ "token": "…", "username": "admin", "role": "admin" }
+```
+
+---
+
+### Login
+```
+POST /api/auth/login
+```
+Body:
+```json
+{ "username": "admin", "password": "yourpassword" }
+```
+Response:
+```json
+{ "token": "…", "username": "admin", "role": "admin" }
+```
+
+---
+
+### Get current user
+```
+GET /api/auth/me
+```
+Response:
+```json
+{ "id": 1, "username": "admin", "role": "admin" }
+```
+
+---
+
+### Logout
+```
+POST /api/auth/logout
+```
+Revokes the Bearer token and clears the session. Returns `{ "ok": true }`.
 
 ---
 
@@ -594,6 +676,198 @@ GET /api/stats/general
 Response:
 ```json
 { "total_downloads": 120, "total_size_bytes": 53687091200 }
+```
+
+---
+
+## Profiles
+
+User profiles are scoped per-session. Include the active profile by setting the `X-Profile-ID` header (or it defaults to profile 1).
+
+### List profiles
+```
+GET /api/profiles
+```
+Response:
+```json
+{ "profiles": [{ "id": 1, "name": "Jason", "avatar_color": "#E50914" }] }
+```
+
+---
+
+### Create profile
+```
+POST /api/profiles
+```
+Body:
+```json
+{ "name": "Jason", "avatar_color": "#E50914" }
+```
+Response:
+```json
+{ "id": 1, "ok": true }
+```
+
+---
+
+### Update profile
+```
+PUT /api/profiles/<id>
+```
+Body (all fields optional):
+```json
+{ "name": "Jason", "avatar_color": "#1DB954" }
+```
+
+---
+
+### Delete profile
+```
+DELETE /api/profiles/<id>
+```
+Returns 400 if the profile cannot be deleted (e.g. last remaining profile).
+
+---
+
+## Watch Progress
+
+Progress is scoped per profile via `X-Profile-ID` header.
+
+### Save / update progress
+```
+POST /api/progress
+```
+Body:
+```json
+{
+  "episode_url": "https://aniworld.to/anime/stream/…/episode-1",
+  "series_title": "Highschool DxD",
+  "series_url": "https://aniworld.to/anime/stream/highschool-dxd",
+  "season": 1,
+  "episode_number": 1,
+  "episode_title": "I Got a Girlfriend!",
+  "position_seconds": 423.5,
+  "duration_seconds": 1452.0,
+  "completed": false,
+  "stream_file": "http://localhost:8080/api/stream/files/Highschool%20DxD/S01E001.m3u8"
+}
+```
+`stream_file` is optional — used to attach a local preview thumbnail.
+
+---
+
+### List watch progress (Continue Watching)
+```
+GET /api/progress?limit=50&continue=0
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `limit` | 50 | Max results |
+| `continue` | `0` | `1` = only return incomplete episodes (Continue Watching) |
+
+Response:
+```json
+{
+  "progress": [
+    {
+      "episode_url": "…",
+      "series_title": "Highschool DxD",
+      "series_url": "…",
+      "season": 1,
+      "episode_number": 1,
+      "episode_title": "I Got a Girlfriend!",
+      "position_seconds": 423.5,
+      "duration_seconds": 1452.0,
+      "completed": false,
+      "updated_at": "2026-06-09 14:00:00",
+      "poster_url": "/api/proxy-image?url=…",
+      "preview_url": "/api/episode-preview/…"
+    }
+  ]
+}
+```
+
+---
+
+### Get progress for a single episode
+```
+GET /api/progress/<episode_url>
+```
+Response:
+```json
+{ "progress": { "position_seconds": 423.5, "duration_seconds": 1452.0, "completed": false, … } }
+```
+Returns `{ "progress": null }` if no record exists.
+
+---
+
+## Watchlist
+
+Watchlist is scoped per profile via `X-Profile-ID` header.
+
+### Get watchlist
+```
+GET /api/watchlist
+```
+Response:
+```json
+{ "items": [{ "title": "Highschool DxD", "url": "…", "poster_url": "/api/proxy-image?url=…" }] }
+```
+
+---
+
+### Get enriched watchlist (with new-content flag)
+```
+GET /api/watchlist/enriched
+```
+Response:
+```json
+{
+  "items": [
+    {
+      "title": "Highschool DxD",
+      "url": "…",
+      "poster_url": "/api/proxy-image?url=…",
+      "last_watched_at": "2026-06-09 14:00:00",
+      "new_content": false
+    }
+  ]
+}
+```
+`new_content: true` means new episodes have been released since this series was last watched.
+
+---
+
+### Add to watchlist
+```
+POST /api/watchlist
+```
+Body:
+```json
+{ "series_url": "…", "series_title": "Highschool DxD", "poster_url": "/api/proxy-image?url=…" }
+```
+
+---
+
+### Remove from watchlist
+```
+DELETE /api/watchlist
+```
+Body:
+```json
+{ "series_url": "…" }
+```
+
+---
+
+### Check if in watchlist
+```
+GET /api/watchlist/check?url=<series_url>
+```
+Response:
+```json
+{ "in_list": true }
 ```
 
 ---
