@@ -12,6 +12,9 @@ services:
       # Config, SQLite database and auth data persist across container updates.
       - redstream-data:/home/aniworld/.aniworld
     environment:
+      # ── API-only mode (disables the browser UI, exposes only /api/* routes) ─
+      ANIWORLD_API_ONLY: "1"
+
       # ── Authentication ────────────────────────────────────────────────────
       # Always enable auth when running on a server.
       ANIWORLD_WEB_AUTH: "1"

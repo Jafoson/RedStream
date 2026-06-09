@@ -22,6 +22,7 @@ dependencies:
   media_kit_video: ^1.1.2
   media_kit_libs_android_video: ^1.0.4
   media_kit_libs_windows_video: ^1.0.4
+  media_kit_libs_macos_video: ^1.0.4
   # Image caching
   cached_network_image: ^3.4.1
 

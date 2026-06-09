@@ -665,7 +665,7 @@ def _proxy_image_url(url: str) -> str:
     return f"/api/proxy-image?url={quote(url, safe='')}"
 
 
-def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
+def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=False):
 
     app = Flask(__name__)
     app_version = _get_version()
@@ -824,19 +824,20 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             "setup_needed": not _has_any_admin(),
         })
 
-    @app.route("/")
-    def index():
-        sto_lang_labels = {"1": "German Dub", "2": "English Dub"}
-        default_web_language = os.environ.get("ANIWORLD_LANGUAGE", "German Dub")
-        if default_web_language not in LANG_LABELS.values():
-            default_web_language = "German Dub"
-        return render_template(
-            "index.html",
-            lang_labels=LANG_LABELS,
-            sto_lang_labels=sto_lang_labels,
-            supported_providers=WORKING_PROVIDERS,
-            default_web_language=default_web_language,
-        )
+    if not api_only:
+        @app.route("/")
+        def index():
+            sto_lang_labels = {"1": "German Dub", "2": "English Dub"}
+            default_web_language = os.environ.get("ANIWORLD_LANGUAGE", "German Dub")
+            if default_web_language not in LANG_LABELS.values():
+                default_web_language = "German Dub"
+            return render_template(
+                "index.html",
+                lang_labels=LANG_LABELS,
+                sto_lang_labels=sto_lang_labels,
+                supported_providers=WORKING_PROVIDERS,
+                default_web_language=default_web_language,
+            )
 
     @app.route("/api/search", methods=["POST"])
     def api_search():
@@ -1281,21 +1282,22 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
     # ─────────────────────────────────────────────────────────────────────────
 
-    @app.route("/library")
-    def library_page():
-        return render_template("library.html")
+    if not api_only:
+        @app.route("/library")
+        def library_page():
+            return render_template("library.html")
 
-    @app.route("/settings")
-    def settings_page():
-        from pathlib import Path
-        import platform
+        @app.route("/settings")
+        def settings_page():
+            from pathlib import Path
+            import platform
 
-        env_path = Path.home() / ".aniworld" / ".env"
-        if platform.system() != "Windows":
-            display = "~/.aniworld/.env"
-        else:
-            display = str(env_path)
-        return render_template("settings.html", env_path=display)
+            env_path = Path.home() / ".aniworld" / ".env"
+            if platform.system() != "Windows":
+                display = "~/.aniworld/.env"
+            else:
+                display = str(env_path)
+            return render_template("settings.html", env_path=display)
 
     @app.route("/api/random")
     def api_random():
@@ -1631,9 +1633,10 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
     # ===== Auto-Sync Page =====
 
-    @app.route("/autosync")
-    def autosync_page():
-        return render_template("autosync.html")
+    if not api_only:
+        @app.route("/autosync")
+        def autosync_page():
+            return render_template("autosync.html")
 
     # ===== Auto-Sync API =====
 
@@ -2574,9 +2577,11 @@ def start_web_ui(
     auth_enabled = (
         auth_enabled or force_sso or os.getenv("ANIWORLD_WEB_AUTH", "0") == "1"
     )
+    api_only = os.getenv("ANIWORLD_API_ONLY", "0") == "1"
 
     app = create_app(
-        auth_enabled=auth_enabled, sso_enabled=sso_enabled, force_sso=force_sso
+        auth_enabled=auth_enabled, sso_enabled=sso_enabled, force_sso=force_sso,
+        api_only=api_only,
     )
     display_host = "localhost" if host == "127.0.0.1" else host
     url = f"http://{display_host}:{port}"
