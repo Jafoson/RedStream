@@ -1,4 +1,29 @@
 // ---------------------------------------------------------------------------
+// Profile
+// ---------------------------------------------------------------------------
+
+class Profile {
+  final int id;
+  final String name;
+  final String avatarColor;
+  final String createdAt;
+
+  const Profile({
+    required this.id,
+    required this.name,
+    required this.avatarColor,
+    this.createdAt = '',
+  });
+
+  factory Profile.fromJson(Map<String, dynamic> j) => Profile(
+        id: j['id'] as int? ?? 1,
+        name: j['name'] as String? ?? 'Profile',
+        avatarColor: j['avatar_color'] as String? ?? '#E50914',
+        createdAt: j['created_at'] as String? ?? '',
+      );
+}
+
+// ---------------------------------------------------------------------------
 // Search / Browse
 // ---------------------------------------------------------------------------
 
@@ -20,6 +45,37 @@ class SeriesResult {
         url: j['url'] as String? ?? '',
         posterUrl: j['poster_url'] as String? ?? '',
         genres: (j['genres'] as List?)?.cast<String>() ?? [],
+      );
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist (enriched)
+// ---------------------------------------------------------------------------
+
+class WatchlistEntry {
+  final String title;
+  final String url;
+  final String posterUrl;
+  final String? lastWatchedAt;
+  final String? newContent; // null | "episode" | "season"
+
+  const WatchlistEntry({
+    required this.title,
+    required this.url,
+    required this.posterUrl,
+    this.lastWatchedAt,
+    this.newContent,
+  });
+
+  SeriesResult get asSeriesResult =>
+      SeriesResult(title: title, url: url, posterUrl: posterUrl);
+
+  factory WatchlistEntry.fromJson(Map<String, dynamic> j) => WatchlistEntry(
+        title: j['title'] as String? ?? '',
+        url: j['url'] as String? ?? '',
+        posterUrl: j['poster_url'] as String? ?? '',
+        lastWatchedAt: j['last_watched_at'] as String?,
+        newContent: j['new_content'] as String?,
       );
 }
 
@@ -158,6 +214,7 @@ class WatchProgress {
   final double positionSeconds;
   final double durationSeconds;
   final bool completed;
+  final bool started;
   final String updatedAt;
   final String posterUrl;
   final String previewUrl;
@@ -172,6 +229,7 @@ class WatchProgress {
     required this.positionSeconds,
     required this.durationSeconds,
     required this.completed,
+    required this.started,
     required this.updatedAt,
     this.posterUrl = '',
     this.previewUrl = '',
@@ -187,6 +245,7 @@ class WatchProgress {
         positionSeconds: (j['position_seconds'] as num?)?.toDouble() ?? 0,
         durationSeconds: (j['duration_seconds'] as num?)?.toDouble() ?? 0,
         completed: (j['completed'] as int? ?? 0) == 1,
+        started: (j['started'] as int? ?? 0) == 1,
         updatedAt: j['updated_at'] as String? ?? '',
         posterUrl: j['poster_url'] as String? ?? '',
         previewUrl: j['preview_url'] as String? ?? '',

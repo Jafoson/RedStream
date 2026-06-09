@@ -29,6 +29,15 @@ ON users (sso_issuer, sso_subject)
 WHERE sso_issuer IS NOT NULL AND sso_subject IS NOT NULL;
 """
 
+_CREATE_API_TOKENS_TABLE = """\
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 
 def get_db():
     ANIWORLD_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -59,6 +68,7 @@ def init_db():
     try:
         conn.execute(_CREATE_TABLE)
         conn.execute(_CREATE_SSO_INDEX)
+        conn.execute(_CREATE_API_TOKENS_TABLE)
         conn.commit()
         _migrate_db(conn)
     finally:
@@ -218,6 +228,49 @@ def update_user_role(user_id, new_role):
         conn.close()
 
 
+# ===== API Tokens =====
+
+
+def create_api_token(user_id):
+    import secrets as _secrets
+
+    token = _secrets.token_urlsafe(32)
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO api_tokens (token, user_id) VALUES (?, ?)",
+            (token, user_id),
+        )
+        conn.commit()
+        return token
+    finally:
+        conn.close()
+
+
+def validate_api_token(token):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT u.id, u.username, u.role FROM api_tokens t "
+            "JOIN users u ON u.id = t.user_id WHERE t.token = ?",
+            (token,),
+        ).fetchone()
+        if not row:
+            return None
+        return {"id": row["id"], "username": row["username"], "role": row["role"]}
+    finally:
+        conn.close()
+
+
+def delete_api_token(token):
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM api_tokens WHERE token = ?", (token,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ===== Download Queue =====
 
 _CREATE_QUEUE_TABLE = """\
@@ -236,7 +289,8 @@ CREATE TABLE IF NOT EXISTS download_queue (
     current_url TEXT,
     errors TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at TEXT
+    completed_at TEXT,
+    priority INTEGER NOT NULL DEFAULT 2
 );
 """
 
@@ -272,6 +326,19 @@ def init_queue_db():
             conn.execute("ALTER TABLE download_queue ADD COLUMN captcha_url TEXT")
         except Exception:
             pass  # column already exists
+        # Add priority column (migration for existing DBs)
+        # 0=watch-intent, 1=prefetch, 2=manual, 3=autosync
+        try:
+            conn.execute(
+                "ALTER TABLE download_queue ADD COLUMN priority INTEGER NOT NULL DEFAULT 2"
+            )
+            # Backfill: autosync items get P3
+            conn.execute(
+                "UPDATE download_queue SET priority = 3 "
+                "WHERE source IN ('sync', 'sync:all_langs')"
+            )
+        except Exception:
+            pass
         conn.commit()
     finally:
         conn.close()
@@ -286,14 +353,23 @@ def add_to_queue(
     username=None,
     custom_path_id=None,
     source="manual",
+    priority=None,
 ):
     import json
+
+    # Auto-assign priority from source if not given explicitly
+    if priority is None:
+        if source in ("sync", "sync:all_langs"):
+            priority = 3
+        else:
+            priority = 2
 
     conn = get_db()
     try:
         cur = conn.execute(
-            "INSERT INTO download_queue (title, series_url, episodes, total_episodes, language, provider, username, custom_path_id, source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO download_queue "
+            "(title, series_url, episodes, total_episodes, language, provider, username, custom_path_id, source, priority) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 title,
                 series_url,
@@ -304,6 +380,7 @@ def add_to_queue(
                 username,
                 custom_path_id,
                 source,
+                priority,
             ),
         )
         row_id = cur.lastrowid
@@ -312,6 +389,28 @@ def add_to_queue(
         )
         conn.commit()
         return row_id
+    finally:
+        conn.close()
+
+
+def find_queue_item_by_episode(episode_url):
+    """Return the first queued or running item whose episodes list contains episode_url."""
+    import json as _json
+
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM download_queue WHERE status IN ('queued', 'running') "
+            "ORDER BY priority ASC, position ASC, id ASC"
+        ).fetchall()
+        for row in rows:
+            try:
+                episodes = _json.loads(row["episodes"] or "[]")
+            except Exception:
+                episodes = []
+            if episode_url in episodes:
+                return dict(row)
+        return None
     finally:
         conn.close()
 
@@ -351,7 +450,41 @@ def get_next_queued():
     try:
         row = conn.execute(
             "SELECT * FROM download_queue WHERE status = 'queued' "
-            "ORDER BY position ASC, id ASC LIMIT 1"
+            "ORDER BY priority ASC, position ASC, id ASC LIMIT 1"
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_next_queued_for_slot(slot):
+    """Return the next item for the given download slot.
+
+    slot='express' → priority 0 (watch-intent) or 1 (prefetch)
+    slot='normal'  → priority 2 (manual) or 3 (autosync)
+    """
+    conn = get_db()
+    try:
+        if slot == "express":
+            row = conn.execute(
+                "SELECT * FROM download_queue WHERE status = 'queued' AND priority <= 1 "
+                "ORDER BY priority ASC, position ASC, id ASC LIMIT 1"
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM download_queue WHERE status = 'queued' AND priority >= 2 "
+                "ORDER BY priority ASC, position ASC, id ASC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_queue_item(queue_id):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM download_queue WHERE id = ?", (queue_id,)
         ).fetchone()
         return dict(row) if row else None
     finally:
@@ -634,6 +767,8 @@ CREATE TABLE IF NOT EXISTS autosync_jobs (
     last_new_found TEXT,
     episodes_found INTEGER NOT NULL DEFAULT 0,
     episodes_queued_up_to INTEGER NOT NULL DEFAULT 0,
+    seasons_found INTEGER NOT NULL DEFAULT 0,
+    seasons_queued_up_to INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -653,6 +788,16 @@ def init_autosync_db():
             conn.commit()
         except Exception:
             pass
+        # Migrate: add seasons tracking columns if missing
+        for col_sql in (
+            "ALTER TABLE autosync_jobs ADD COLUMN seasons_found INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE autosync_jobs ADD COLUMN seasons_queued_up_to INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                conn.execute(col_sql)
+                conn.commit()
+            except Exception:
+                pass
         # Add UNIQUE index on series_url (migration for existing DBs)
         try:
             conn.execute(
@@ -746,6 +891,8 @@ def update_autosync_job(job_id, **fields):
         "last_new_found",
         "episodes_found",
         "episodes_queued_up_to",
+        "seasons_found",
+        "seasons_queued_up_to",
     }
     filtered = {k: v for k, v in fields.items() if k in allowed}
     if not filtered:
@@ -775,12 +922,102 @@ def remove_autosync_job(job_id):
         conn.close()
 
 
+# ===== Profiles =====
+
+_CREATE_PROFILES_TABLE = """\
+CREATE TABLE IF NOT EXISTS profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    avatar_color TEXT NOT NULL DEFAULT '#E50914',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+
+def init_profiles_db():
+    ANIWORLD_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    conn = get_db()
+    try:
+        conn.execute(_CREATE_PROFILES_TABLE)
+        conn.commit()
+        row = conn.execute("SELECT COUNT(*) AS cnt FROM profiles").fetchone()
+        if row["cnt"] == 0:
+            conn.execute(
+                "INSERT INTO profiles (id, name, avatar_color) VALUES (1, 'Standard', '#E50914')"
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def get_profiles():
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, avatar_color, created_at FROM profiles ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def create_profile(name, avatar_color="#E50914"):
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "INSERT INTO profiles (name, avatar_color) VALUES (?, ?)",
+            (name, avatar_color),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def update_profile(profile_id, name=None, avatar_color=None):
+    if name is None and avatar_color is None:
+        return
+    conn = get_db()
+    try:
+        if name is not None and avatar_color is not None:
+            conn.execute(
+                "UPDATE profiles SET name = ?, avatar_color = ? WHERE id = ?",
+                (name, avatar_color, profile_id),
+            )
+        elif name is not None:
+            conn.execute("UPDATE profiles SET name = ? WHERE id = ?", (name, profile_id))
+        else:
+            conn.execute(
+                "UPDATE profiles SET avatar_color = ? WHERE id = ?",
+                (avatar_color, profile_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_profile(profile_id):
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT COUNT(*) AS cnt FROM profiles").fetchone()
+        if row["cnt"] <= 1:
+            return False, "Cannot delete the last profile"
+        conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+        conn.execute("DELETE FROM watch_progress WHERE profile_id = ?", (profile_id,))
+        conn.execute("DELETE FROM watchlist WHERE profile_id = ?", (profile_id,))
+        conn.commit()
+        return True, None
+    finally:
+        conn.close()
+
+
 # ===== Watch Progress =====
 
 _CREATE_WATCH_PROGRESS_TABLE = """\
 CREATE TABLE IF NOT EXISTS watch_progress (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    episode_url TEXT NOT NULL UNIQUE,
+    profile_id INTEGER NOT NULL DEFAULT 1,
+    episode_url TEXT NOT NULL,
     series_title TEXT,
     series_url TEXT,
     season INTEGER NOT NULL DEFAULT 0,
@@ -790,9 +1027,49 @@ CREATE TABLE IF NOT EXISTS watch_progress (
     duration_seconds REAL NOT NULL DEFAULT 0,
     completed INTEGER NOT NULL DEFAULT 0,
     stream_file TEXT,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(episode_url, profile_id)
 );
 """
+
+
+def _migrate_watch_progress_profiles(conn):
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(watch_progress)").fetchall()}
+    if "profile_id" in cols:
+        return
+    conn.execute("""
+        CREATE TABLE watch_progress_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id INTEGER NOT NULL DEFAULT 1,
+            episode_url TEXT NOT NULL,
+            series_title TEXT,
+            series_url TEXT,
+            season INTEGER NOT NULL DEFAULT 0,
+            episode_number INTEGER NOT NULL DEFAULT 0,
+            episode_title TEXT,
+            position_seconds REAL NOT NULL DEFAULT 0,
+            duration_seconds REAL NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            stream_file TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            started INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(episode_url, profile_id)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO watch_progress_new
+            (profile_id, episode_url, series_title, series_url, season, episode_number,
+             episode_title, position_seconds, duration_seconds, completed,
+             stream_file, updated_at, started)
+        SELECT 1, episode_url, series_title, series_url, season, episode_number,
+               episode_title, position_seconds, duration_seconds, completed,
+               stream_file, updated_at, COALESCE(started, 0)
+        FROM watch_progress
+    """)
+    conn.execute("DROP TABLE watch_progress")
+    conn.execute("ALTER TABLE watch_progress_new RENAME TO watch_progress")
+    conn.commit()
 
 
 def init_watch_progress_db():
@@ -805,7 +1082,19 @@ def init_watch_progress_db():
             conn.execute("ALTER TABLE watch_progress ADD COLUMN stream_file TEXT")
         except Exception:
             pass
+        # Migrate: add started column; backfill existing rows with meaningful progress
+        try:
+            conn.execute(
+                "ALTER TABLE watch_progress ADD COLUMN started INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.execute(
+                "UPDATE watch_progress SET started = 1 WHERE position_seconds > 30"
+            )
+        except Exception:
+            pass
         conn.commit()
+        # Migrate: add profile_id + composite unique (table recreation)
+        _migrate_watch_progress_profiles(conn)
     finally:
         conn.close()
 
@@ -821,17 +1110,19 @@ def upsert_watch_progress(
     duration_seconds=0,
     completed=False,
     stream_file=None,
+    profile_id=1,
 ):
     conn = get_db()
     try:
+        started_val = 1 if float(position_seconds) > 30 else 0
         conn.execute(
             """
             INSERT INTO watch_progress
-                (episode_url, series_title, series_url, season, episode_number,
+                (profile_id, episode_url, series_title, series_url, season, episode_number,
                  episode_title, position_seconds, duration_seconds, completed,
-                 stream_file, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-            ON CONFLICT(episode_url) DO UPDATE SET
+                 stream_file, updated_at, started)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+            ON CONFLICT(episode_url, profile_id) DO UPDATE SET
                 series_title = excluded.series_title,
                 series_url = excluded.series_url,
                 season = excluded.season,
@@ -841,9 +1132,11 @@ def upsert_watch_progress(
                 duration_seconds = excluded.duration_seconds,
                 completed = excluded.completed,
                 stream_file = COALESCE(excluded.stream_file, watch_progress.stream_file),
-                updated_at = datetime('now')
+                updated_at = datetime('now'),
+                started = MAX(watch_progress.started, excluded.started)
             """,
             (
+                profile_id,
                 episode_url,
                 series_title,
                 series_url,
@@ -854,6 +1147,7 @@ def upsert_watch_progress(
                 float(duration_seconds),
                 1 if completed else 0,
                 stream_file,
+                started_val,
             ),
         )
         conn.commit()
@@ -861,19 +1155,19 @@ def upsert_watch_progress(
         conn.close()
 
 
-def get_watch_progress(episode_url):
+def get_watch_progress(episode_url, profile_id=1):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT * FROM watch_progress WHERE episode_url = ?",
-            (episode_url,),
+            "SELECT * FROM watch_progress WHERE episode_url = ? AND profile_id = ?",
+            (episode_url, profile_id),
         ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
 
 
-def get_episode_progress_for_urls(episode_urls):
+def get_episode_progress_for_urls(episode_urls, profile_id=1):
     """Returns {episode_url: dict} for the given list of URLs."""
     if not episode_urls:
         return {}
@@ -881,48 +1175,71 @@ def get_episode_progress_for_urls(episode_urls):
     try:
         placeholders = ",".join("?" * len(episode_urls))
         rows = conn.execute(
-            f"SELECT * FROM watch_progress WHERE episode_url IN ({placeholders})",
-            tuple(episode_urls),
+            f"SELECT * FROM watch_progress WHERE episode_url IN ({placeholders}) AND profile_id = ?",
+            (*episode_urls, profile_id),
         ).fetchall()
         return {r["episode_url"]: dict(r) for r in rows}
     finally:
         conn.close()
 
 
-def get_watch_progress_for_series(series_url):
+def get_watch_progress_for_series(series_url, profile_id=1):
     """Return all watch_progress rows for a given series_url, ordered by season/episode."""
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT * FROM watch_progress WHERE series_url = ? "
+            "SELECT * FROM watch_progress WHERE series_url = ? AND profile_id = ? "
             "ORDER BY season, episode_number",
-            (series_url,),
+            (series_url, profile_id),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def get_all_watch_progress(limit=50):
+def get_all_watch_progress(limit=50, profile_id=1):
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT * FROM watch_progress ORDER BY updated_at DESC LIMIT ?",
-            (limit,),
+            "SELECT * FROM watch_progress WHERE profile_id = ? ORDER BY updated_at DESC LIMIT ?",
+            (profile_id, limit),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def get_continue_watching(limit=20):
-    """In-progress episodes: has position > 30s and not completed."""
+def get_continue_watching(limit=20, profile_id=1):
+    """Return the frontier (furthest-watched) episode per series, ordered by most recently updated.
+
+    The frontier is the episode with the highest (season, episode_number) that the user
+    meaningfully started (started=1).  A completed frontier means the user finished that
+    episode and should continue with the next one; a non-completed frontier means they
+    are mid-episode and should resume it.
+    """
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT * FROM watch_progress WHERE completed = 0 AND position_seconds > 30 "
-            "ORDER BY updated_at DESC LIMIT ?",
-            (limit,),
+            """
+            SELECT wp.*
+            FROM watch_progress wp
+            INNER JOIN (
+                SELECT series_url,
+                       MAX(season * 10000 + episode_number) AS max_rank
+                FROM watch_progress
+                WHERE started = 1
+                  AND profile_id = ?
+                  AND series_url IS NOT NULL
+                  AND series_url != ''
+                GROUP BY series_url
+            ) t ON wp.series_url = t.series_url
+               AND (wp.season * 10000 + wp.episode_number) = t.max_rank
+               AND wp.started = 1
+               AND wp.profile_id = ?
+            ORDER BY wp.updated_at DESC
+            LIMIT ?
+            """,
+            (profile_id, profile_id, limit),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -998,12 +1315,39 @@ def get_queue_stats():
 _CREATE_WATCHLIST_TABLE = """\
 CREATE TABLE IF NOT EXISTS watchlist (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    series_url TEXT NOT NULL UNIQUE,
+    profile_id INTEGER NOT NULL DEFAULT 1,
+    series_url TEXT NOT NULL,
     series_title TEXT NOT NULL,
     poster_url TEXT NOT NULL DEFAULT '',
-    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+    added_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(series_url, profile_id)
 );
 """
+
+
+def _migrate_watchlist_profiles(conn):
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(watchlist)").fetchall()}
+    if "profile_id" in cols:
+        return
+    conn.execute("""
+        CREATE TABLE watchlist_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id INTEGER NOT NULL DEFAULT 1,
+            series_url TEXT NOT NULL,
+            series_title TEXT NOT NULL,
+            poster_url TEXT NOT NULL DEFAULT '',
+            added_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(series_url, profile_id)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO watchlist_new (profile_id, series_url, series_title, poster_url, added_at)
+        SELECT 1, series_url, series_title, poster_url, added_at
+        FROM watchlist
+    """)
+    conn.execute("DROP TABLE watchlist")
+    conn.execute("ALTER TABLE watchlist_new RENAME TO watchlist")
+    conn.commit()
 
 
 def init_watchlist_db():
@@ -1012,50 +1356,95 @@ def init_watchlist_db():
     try:
         conn.execute(_CREATE_WATCHLIST_TABLE)
         conn.commit()
+        _migrate_watchlist_profiles(conn)
     finally:
         conn.close()
 
 
-def add_to_watchlist(series_url, series_title, poster_url=""):
+def add_to_watchlist(series_url, series_title, poster_url="", profile_id=1):
     conn = get_db()
     try:
         conn.execute(
-            "INSERT OR REPLACE INTO watchlist (series_url, series_title, poster_url) "
-            "VALUES (?, ?, ?)",
-            (series_url, series_title, poster_url),
+            "INSERT OR REPLACE INTO watchlist (profile_id, series_url, series_title, poster_url) "
+            "VALUES (?, ?, ?, ?)",
+            (profile_id, series_url, series_title, poster_url),
         )
         conn.commit()
     finally:
         conn.close()
 
 
-def remove_from_watchlist(series_url):
+def remove_from_watchlist(series_url, profile_id=1):
     conn = get_db()
     try:
-        conn.execute("DELETE FROM watchlist WHERE series_url = ?", (series_url,))
+        conn.execute(
+            "DELETE FROM watchlist WHERE series_url = ? AND profile_id = ?",
+            (series_url, profile_id),
+        )
         conn.commit()
     finally:
         conn.close()
 
 
-def get_watchlist():
+def get_watchlist(profile_id=1):
     conn = get_db()
     try:
         rows = conn.execute(
             "SELECT series_url, series_title, poster_url, added_at "
-            "FROM watchlist ORDER BY added_at DESC"
+            "FROM watchlist WHERE profile_id = ? ORDER BY added_at DESC",
+            (profile_id,),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def is_in_watchlist(series_url):
+def get_watchlist_enriched(profile_id=1):
+    """Return watchlist items enriched with last_watched_at and new_content status."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                wl.series_url,
+                wl.series_title,
+                wl.poster_url,
+                wl.added_at,
+                wp.last_watched_at,
+                CASE
+                    WHEN aj.seasons_found > aj.seasons_queued_up_to
+                         AND aj.seasons_queued_up_to > 0
+                    THEN 'season'
+                    WHEN aj.last_new_found IS NOT NULL
+                         AND (wp.last_watched_at IS NULL
+                              OR aj.last_new_found > wp.last_watched_at)
+                    THEN 'episode'
+                    ELSE NULL
+                END AS new_content
+            FROM watchlist wl
+            LEFT JOIN autosync_jobs aj ON aj.series_url = wl.series_url
+            LEFT JOIN (
+                SELECT series_url, MAX(updated_at) AS last_watched_at
+                FROM watch_progress
+                WHERE profile_id = ?
+                GROUP BY series_url
+            ) wp ON wp.series_url = wl.series_url
+            WHERE wl.profile_id = ?
+            ORDER BY COALESCE(wp.last_watched_at, wl.added_at) DESC
+            """,
+            (profile_id, profile_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def is_in_watchlist(series_url, profile_id=1):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT COUNT(*) AS cnt FROM watchlist WHERE series_url = ?",
-            (series_url,),
+            "SELECT COUNT(*) AS cnt FROM watchlist WHERE series_url = ? AND profile_id = ?",
+            (series_url, profile_id),
         ).fetchone()
         return row["cnt"] > 0
     finally:

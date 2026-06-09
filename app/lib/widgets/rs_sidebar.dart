@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../navigation/app_nav.dart';
+import '../screens/profile_screen.dart';
 import '../theme/rs_theme.dart';
 
 class RsSidebar extends StatelessWidget {
@@ -33,6 +34,7 @@ class RsSidebar extends StatelessWidget {
             _NavGroup(nav: nav, items: _libItems),
             const Spacer(),
             _NavGroup(nav: nav, items: _genItems),
+            _ProfileSwitchTile(nav: nav),
             const SizedBox(height: 26),
           ],
         ),
@@ -139,20 +141,71 @@ class _NavItem {
 
 const _menuItems = [
   _NavItem(Icons.home_rounded, 'Home', NavScreen.home, 0),
-  _NavItem(Icons.tv_rounded, 'Serien', NavScreen.serien, 1),
-  _NavItem(Icons.movie_filter_rounded, 'Anime', NavScreen.anime, 2),
-  _NavItem(Icons.search_rounded, 'Suche', NavScreen.search, 3),
+  _NavItem(Icons.bookmark_rounded, 'Watchlist', NavScreen.watchlist, 1),
+  _NavItem(Icons.tv_rounded, 'Serien', NavScreen.serien, 2),
+  _NavItem(Icons.movie_filter_rounded, 'Anime', NavScreen.anime, 3),
+  _NavItem(Icons.search_rounded, 'Suche', NavScreen.search, 4),
 ];
 
 const _libItems = [
-  _NavItem(Icons.download_rounded, 'Downloads', NavScreen.queue, 4),
-  _NavItem(Icons.video_library_rounded, 'Bibliothek', NavScreen.library, 5),
-  _NavItem(Icons.bookmark_rounded, 'Meine Liste', NavScreen.watchlist, 6),
+  _NavItem(Icons.download_rounded, 'Downloads', NavScreen.queue, 5),
+  _NavItem(Icons.video_library_rounded, 'Bibliothek', NavScreen.library, 6),
 ];
 
 const _genItems = [
   _NavItem(Icons.settings_rounded, 'Einstellungen', NavScreen.settings, 7),
 ];
+
+class _ProfileSwitchTile extends StatelessWidget {
+  final AppNavController nav;
+  const _ProfileSwitchTile({required this.nav});
+
+  static const _index = 8;
+
+  @override
+  Widget build(BuildContext context) {
+    final isFoc = nav.isSidebarFocused(_index);
+
+    return GestureDetector(
+      onTap: () async {
+        nav.detach();
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ProfileScreen(canPop: true)),
+        );
+        nav.attach();
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOut,
+        margin: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
+        padding: EdgeInsets.fromLTRB(isFoc ? 20 : 16, 13, 16, 13),
+        decoration: BoxDecoration(
+          color: isFoc ? Rs.accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(13),
+          boxShadow: isFoc
+              ? [BoxShadow(color: Rs.accent.withValues(alpha: 0.45), blurRadius: 30, offset: const Offset(0, 10))]
+              : null,
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.switch_account_rounded, size: 22, color: isFoc ? Colors.white : Rs.muted),
+            const SizedBox(width: 15),
+            Expanded(
+              child: Text(
+                'Profil wechseln',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: isFoc ? Colors.white : Rs.muted,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _NavTile extends StatelessWidget {
   final AppNavController nav;

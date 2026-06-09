@@ -43,12 +43,79 @@ class ServerUrlNotifier extends StateNotifier<String> {
 }
 
 // ---------------------------------------------------------------------------
-// API service — rebuilt whenever server URL changes
+// Auth token
+// ---------------------------------------------------------------------------
+
+final authTokenProvider = StateNotifierProvider<AuthTokenNotifier, String?>((ref) {
+  final prefs = ref.watch(sharedPreferencesProvider);
+  return AuthTokenNotifier(prefs);
+});
+
+class AuthTokenNotifier extends StateNotifier<String?> {
+  final SharedPreferences _prefs;
+
+  AuthTokenNotifier(this._prefs) : super(_prefs.getString('auth_token'));
+
+  Future<void> setToken(String token) async {
+    await _prefs.setString('auth_token', token);
+    state = token;
+  }
+
+  Future<void> clearToken() async {
+    await _prefs.remove('auth_token');
+    state = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Active Profile
+// ---------------------------------------------------------------------------
+
+final activeProfileIdProvider =
+    StateNotifierProvider<ActiveProfileIdNotifier, int?>((ref) {
+  final prefs = ref.watch(sharedPreferencesProvider);
+  return ActiveProfileIdNotifier(prefs);
+});
+
+class ActiveProfileIdNotifier extends StateNotifier<int?> {
+  final SharedPreferences _prefs;
+
+  ActiveProfileIdNotifier(this._prefs)
+      : super(_prefs.getInt('active_profile_id'));
+
+  Future<void> setProfile(int id) async {
+    await _prefs.setInt('active_profile_id', id);
+    state = id;
+  }
+
+  Future<void> clearProfile() async {
+    await _prefs.remove('active_profile_id');
+    state = null;
+  }
+}
+
+/// Resolves to the display name of the currently active profile.
+final activeProfileNameProvider = FutureProvider<String?>((ref) async {
+  final id = ref.watch(activeProfileIdProvider);
+  if (id == null) return null;
+  final api = ref.watch(apiServiceProvider);
+  final profiles = await api.getProfiles();
+  try {
+    return profiles.firstWhere((p) => p.id == id).name;
+  } catch (_) {
+    return null;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// API service — rebuilt whenever server URL or active profile changes
 // ---------------------------------------------------------------------------
 
 final apiServiceProvider = Provider<ApiService>((ref) {
   final url = ref.watch(serverUrlProvider);
-  return ApiService(url);
+  final profileId = ref.watch(activeProfileIdProvider);
+  final authToken = ref.watch(authTokenProvider);
+  return ApiService(url, profileId: profileId, authToken: authToken);
 });
 
 // ---------------------------------------------------------------------------
@@ -365,6 +432,31 @@ class WatchlistNotifier extends StateNotifier<AsyncValue<List<SeriesResult>>> {
     state = const AsyncValue.loading();
     try {
       final items = await _api.getWatchlist();
+      state = AsyncValue.data(items);
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  Future<void> refresh() => load();
+}
+
+final watchlistEnrichedProvider =
+    StateNotifierProvider<WatchlistEnrichedNotifier, AsyncValue<List<WatchlistEntry>>>(
+        (ref) => WatchlistEnrichedNotifier(ref.watch(apiServiceProvider)));
+
+class WatchlistEnrichedNotifier
+    extends StateNotifier<AsyncValue<List<WatchlistEntry>>> {
+  final ApiService _api;
+
+  WatchlistEnrichedNotifier(this._api) : super(const AsyncValue.loading()) {
+    load();
+  }
+
+  Future<void> load() async {
+    state = const AsyncValue.loading();
+    try {
+      final items = await _api.getWatchlistEnriched();
       state = AsyncValue.data(items);
     } catch (e, st) {
       state = AsyncValue.error(e, st);

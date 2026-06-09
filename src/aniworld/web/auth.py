@@ -26,6 +26,7 @@ from .db import (
     has_any_admin,
     list_users,
     update_user_role,
+    validate_api_token,
     verify_user,
 )
 
@@ -94,15 +95,36 @@ def get_or_create_secret_key():
     return key
 
 
+def _get_bearer_user():
+    """Validate Bearer token from Authorization header; cache result in flask.g."""
+    from flask import g
+
+    if getattr(g, "_bearer_checked", False):
+        return getattr(g, "api_user", None)
+    g._bearer_checked = True
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        g.api_user = None
+        return None
+    token = auth_header[7:].strip()
+    user = validate_api_token(token)
+    g.api_user = user
+    return user
+
+
 def get_current_user():
     uid = session.get("user_id")
-    if uid is None:
-        return None
-    return {
-        "id": uid,
-        "username": session.get("user_name", ""),
-        "role": session.get("user_role", "user"),
-    }
+    if uid is not None:
+        return {
+            "id": uid,
+            "username": session.get("user_name", ""),
+            "role": session.get("user_role", "user"),
+        }
+    from flask import g
+
+    if getattr(g, "_bearer_checked", False):
+        return getattr(g, "api_user", None)
+    return None
 
 
 def refresh_session_role():
@@ -129,11 +151,13 @@ def refresh_session_role():
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if session.get("user_id") is None:
-            if request.is_json or request.path.startswith("/api/"):
-                return jsonify({"error": "authentication required"}), 401
-            return redirect(url_for("auth.login"))
-        return f(*args, **kwargs)
+        if session.get("user_id") is not None:
+            return f(*args, **kwargs)
+        if _get_bearer_user():
+            return f(*args, **kwargs)
+        if request.is_json or request.path.startswith("/api/"):
+            return jsonify({"error": "authentication required"}), 401
+        return redirect(url_for("auth.login"))
 
     return decorated
 
@@ -141,15 +165,22 @@ def login_required(f):
 def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if session.get("user_id") is None:
-            if request.is_json or request.path.startswith("/api/"):
-                return jsonify({"error": "authentication required"}), 401
-            return redirect(url_for("auth.login"))
-        if session.get("user_role") != "admin":
-            if request.is_json or request.path.startswith("/api/"):
-                return jsonify({"error": "admin access required"}), 403
-            return redirect(url_for("index"))
-        return f(*args, **kwargs)
+        if session.get("user_id") is not None:
+            if session.get("user_role") != "admin":
+                if request.is_json or request.path.startswith("/api/"):
+                    return jsonify({"error": "admin access required"}), 403
+                return redirect(url_for("index"))
+            return f(*args, **kwargs)
+        user = _get_bearer_user()
+        if user:
+            if user.get("role") != "admin":
+                if request.is_json or request.path.startswith("/api/"):
+                    return jsonify({"error": "admin access required"}), 403
+                return redirect(url_for("index"))
+            return f(*args, **kwargs)
+        if request.is_json or request.path.startswith("/api/"):
+            return jsonify({"error": "authentication required"}), 401
+        return redirect(url_for("auth.login"))
 
     return decorated
 

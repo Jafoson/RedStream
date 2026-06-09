@@ -7,7 +7,7 @@ import '../models/models.dart';
 import '../navigation/app_nav.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
-import '../widgets/rs_poster.dart'; // keep: used by _LazyPosterCard
+import '../widgets/rs_poster.dart';
 
 enum GridKind { series, anime }
 
@@ -299,6 +299,7 @@ class _GridScreenState extends ConsumerState<GridScreen> {
             }
           }
         },
+        gridMode: true,
       );
       _scrollToNavRow(widget.nav.contentRow);
     });
@@ -398,28 +399,29 @@ class _GridScreenState extends ConsumerState<GridScreen> {
                 padding: const EdgeInsets.fromLTRB(44, 0, 44, 14),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ...List.generate(gridRow.items.length, (ci) => Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                            right: ci < gridRow.items.length - 1 ? 14 : 0),
-                        child: AspectRatio(
-                          aspectRatio: 2 / 3,
-                          child: ListenableBuilder(
-                            listenable: widget.nav,
-                            builder: (_, _) => _LazyPosterCard(
-                              item: gridRow.items[ci],
-                              focused: widget.nav.isItemFocused(gridRow.navRow, ci),
-                              onTap: () => widget.onSelect(gridRow.items[ci]),
-                            ),
-                          ),
-                        ),
+                  children: List.generate(_cols, (ci) {
+                    final hasItem = ci < gridRow.items.length;
+                    return [
+                      if (ci > 0) const SizedBox(width: 14),
+                      Expanded(
+                        child: hasItem
+                            ? AspectRatio(
+                                aspectRatio: 2 / 3,
+                                child: ListenableBuilder(
+                                  listenable: widget.nav,
+                                  builder: (_, _) => _LazyPosterCard(
+                                    item: gridRow.items[ci],
+                                    focused: widget.nav.isItemFocused(
+                                        gridRow.navRow, ci),
+                                    onTap: () =>
+                                        widget.onSelect(gridRow.items[ci]),
+                                  ),
+                                ),
+                              )
+                            : const SizedBox(),
                       ),
-                    )),
-                    // Pad incomplete last row
-                    ...List.generate(_cols - gridRow.items.length,
-                        (_) => const Expanded(child: SizedBox())),
-                  ],
+                    ];
+                  }).expand((e) => e).toList(),
                 ),
               );
             },

@@ -1,45 +1,55 @@
 services:
-  aniworld:
+  redstream:
     image: ghcr.io/phoenixthrush/aniworld-downloader:latest
-    container_name: aniworld-downloader
-  # build: .
+    # build: .                     # uncomment to build from source instead
+    container_name: redstream
     ports:
-      - "8080:8080"
+      - "8080:8080"                # host:container — change left side to move the port
     volumes:
-      # Persist downloads on the host so they survive container recreation.
-      - ./Downloads:/app/Downloads
-      # Persist application config and auth database across restarts.
-      - aniworld-data:/home/aniworld/.aniworld
+      # Downloads are stored on the host so they survive container recreation.
+      # Run `mkdir -p downloads` before `docker compose up` to avoid root-owned dirs.
+      - ./downloads:/app/Downloads
+      # Config, SQLite database and auth data persist across container updates.
+      - redstream-data:/home/aniworld/.aniworld
+    environment:
+      # ── Authentication ────────────────────────────────────────────────────
+      # Always enable auth when running on a server.
+      ANIWORLD_WEB_AUTH: "1"
+      # Auto-create the first admin account on startup (skips the setup page).
+      # !! Change these before exposing the service publicly !!
+      ANIWORLD_WEB_ADMIN_USER: "admin"
+      ANIWORLD_WEB_ADMIN_PASS: "changeme"
 
-    # NOTE: Create ./Downloads before running: mkdir -p Downloads
-    # Docker creates missing bind-mount directories as root, causing permission errors.
+      # ── Download settings ─────────────────────────────────────────────────
+      ANIWORLD_LANGUAGE: "German Dub"          # German Dub | English Sub | German Sub | English Dub
+      ANIWORLD_PROVIDER: "VOE"                 # VOE | Vidmoly | Vidoza
+      ANIWORLD_PROVIDER_FALLBACK_ORDER: "VOE,Vidmoly,Vidoza"
+      ANIWORLD_VIDEO_CODEC: "copy"             # copy | h264 | h265 | av1
+      ANIWORLD_LANG_SEPARATION: "0"            # 1 = separate into german-dub/, english-sub/ subfolders
+      ANIWORLD_DISABLE_ENGLISH_SUB: "0"
 
-    # environment:
-    # --- General settings (uncomment the environment block to customise) ---
-    #   ANIWORLD_LANGUAGE: "German Dub"               # Default language (German Dub | English Sub | German Sub | English Dub)
-    #   ANIWORLD_PROVIDER: "VOE"                      # Default streaming provider
-    #   ANIWORLD_NAMING_TEMPLATE: "{title} ({year}) [imdbid-{imdbid}]/Season {season}/{title} S{season}E{episode}.mkv"
-    #   ANIWORLD_VIDEO_CODEC: "copy"                  # Video codec: copy | h264 | h265 | av1
-    #   ANIWORLD_LANG_SEPARATION: "0"                 # Separate downloads into language subfolders (german-dub/, english-sub/)
-    #   ANIWORLD_DISABLE_ENGLISH_SUB: "0"             # Block English Sub downloads entirely
-    #   ANIWORLD_DEBUG_MODE: "0"                      # Enable debug logging
+      # ── Auto-sync ─────────────────────────────────────────────────────────
+      ANIWORLD_SYNC_SCHEDULE: "0"              # 0 (off) | 1min | 30min | 1h | 2h | 4h | 8h | 12h | 24h
+      ANIWORLD_SYNC_LANGUAGE: "German Dub"
+      ANIWORLD_SYNC_PROVIDER: "VOE"
 
-    # --- Authentication (uncomment the environment block to enable) ---
-    #   ANIWORLD_WEB_AUTH: "1"                        # Enable local username/password login
-    #   ANIWORLD_WEB_ADMIN_USER: ""                   # Auto-create admin on first run (skip setup page)
-    #   ANIWORLD_WEB_ADMIN_PASS: ""                   # Password for auto-created admin
-    #   ANIWORLD_WEB_SSO: "1"                         # Enable OIDC SSO login button
-    #   ANIWORLD_WEB_FORCE_SSO: "1"                   # SSO-only mode (no local accounts)
-    #   # OIDC / SSO provider settings (required when SSO is enabled)
-    #   ANIWORLD_OIDC_ISSUER_URL: "https://keycloak.example.com/realms/myrealm"
-    #   ANIWORLD_OIDC_CLIENT_ID: "aniworld"
-    #   ANIWORLD_OIDC_CLIENT_SECRET: "secret"
-    #   ANIWORLD_OIDC_DISPLAY_NAME: "SSO"             # Label shown on login button
-    #   ANIWORLD_OIDC_ADMIN_USER: ""                  # SSO username auto-promoted to admin
-    #   ANIWORLD_OIDC_ADMIN_SUBJECT: ""               # OIDC subject claim for auto-admin (preferred over username)
-    #   ANIWORLD_WEB_BASE_URL: "https://aniworld.example.com"  # External URL for redirects
+      # ── Reverse proxy (uncomment when behind nginx/Caddy/Traefik) ─────────
+      # ANIWORLD_WEB_BASE_URL: "https://redstream.example.com"
+
+      # ── OIDC / SSO (uncomment to enable) ─────────────────────────────────
+      # ANIWORLD_WEB_SSO: "1"
+      # ANIWORLD_WEB_FORCE_SSO: "1"           # disable local login, SSO only
+      # ANIWORLD_OIDC_ISSUER_URL: "https://keycloak.example.com/realms/myrealm"
+      # ANIWORLD_OIDC_CLIENT_ID: "redstream"
+      # ANIWORLD_OIDC_CLIENT_SECRET: "your-client-secret"
+      # ANIWORLD_OIDC_DISPLAY_NAME: "SSO"
+      # ANIWORLD_OIDC_ADMIN_SUBJECT: ""       # OIDC sub claim of the admin user
+
+      # ── TMDB posters (required for thumbnails/backdrops) ─────────────────
+      # Get your token at https://www.themoviedb.org/settings/api
+      ANIWORLD_TMDB_TOKEN: ""   # ← paste your TMDB Bearer token here
 
     restart: unless-stopped
 
 volumes:
-  aniworld-data:
+  redstream-data:

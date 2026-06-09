@@ -6,6 +6,9 @@ import '../navigation/app_nav.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
 import '../widgets/rs_poster.dart';
+import '../widgets/tv_poster_grid.dart';
+
+enum _WatchlistSort { recentlyWatched, newContent, alphabetical }
 
 class WatchlistScreen extends ConsumerStatefulWidget {
   final AppNavController nav;
@@ -20,44 +23,55 @@ class WatchlistScreen extends ConsumerStatefulWidget {
 class _WatchlistScreenState extends ConsumerState<WatchlistScreen> {
   static const _cols = 6;
   final _scrollCtrl = ScrollController();
-  final _rowKeys = <int, GlobalKey>{};
+  _WatchlistSort _sort = _WatchlistSort.recentlyWatched;
 
   @override
   void initState() {
     super.initState();
-    widget.nav.addListener(_onNavChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) ref.read(watchlistProvider.notifier).refresh();
+      if (mounted) ref.read(watchlistEnrichedProvider.notifier).refresh();
     });
   }
 
   @override
   void dispose() {
-    widget.nav.removeListener(_onNavChanged);
     _scrollCtrl.dispose();
     super.dispose();
   }
 
-  void _onNavChanged() {
-    if (!mounted) return;
-    final row = widget.nav.contentRow;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollCtrl.hasClients) return;
-      final ctx = _rowKeys[row]?.currentContext;
-      if (ctx != null) {
-        Scrollable.ensureVisible(
-          ctx,
-          duration: const Duration(milliseconds: 240),
-          curve: Curves.easeOut,
-          alignment: 0.1,
-        );
-      }
-    });
+  List<WatchlistEntry> _sorted(List<WatchlistEntry> items) {
+    final sorted = List<WatchlistEntry>.from(items);
+    switch (_sort) {
+      case _WatchlistSort.recentlyWatched:
+        sorted.sort((a, b) {
+          final at = a.lastWatchedAt;
+          final bt = b.lastWatchedAt;
+          if (at == null && bt == null) return 0;
+          if (at == null) return 1;
+          if (bt == null) return -1;
+          return bt.compareTo(at);
+        });
+      case _WatchlistSort.newContent:
+        sorted.sort((a, b) {
+          final aNew = a.newContent != null ? 0 : 1;
+          final bNew = b.newContent != null ? 0 : 1;
+          if (aNew != bNew) return aNew - bNew;
+          final at = a.lastWatchedAt;
+          final bt = b.lastWatchedAt;
+          if (at == null && bt == null) return 0;
+          if (at == null) return 1;
+          if (bt == null) return -1;
+          return bt.compareTo(at);
+        });
+      case _WatchlistSort.alphabetical:
+        sorted.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    }
+    return sorted;
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(watchlistProvider);
+    final state = ref.watch(watchlistEnrichedProvider);
 
     return state.when(
       loading: () => const Center(
@@ -71,40 +85,45 @@ class _WatchlistScreenState extends ConsumerState<WatchlistScreen> {
     );
   }
 
-  Widget _buildContent(List<SeriesResult> items) {
-    final rows = <List<SeriesResult>>[];
-    for (var i = 0; i < items.length; i += _cols) {
-      rows.add(items.sublist(i, (i + _cols).clamp(0, items.length)));
-    }
+  Widget _buildContent(List<WatchlistEntry> items) {
+    final sortedItems = _sorted(items);
+    final seriesItems = sortedItems.map((e) => e.asSeriesResult).toList();
+    final entryMap = {for (final e in sortedItems) e.url: e};
 
-    // Build series_url → progress fraction from continue-watching provider.
+    // progress map from continueWatchingProvider
     final continueState = ref.watch(continueWatchingProvider);
     final progressMap = <String, double>{};
     for (final p in continueState.items) {
       final url = p.seriesUrl ?? '';
       if (url.isNotEmpty && p.durationSeconds > 0) {
-        progressMap[url] =
-            (p.positionSeconds / p.durationSeconds).clamp(0.0, 1.0);
+        progressMap[url] = (p.positionSeconds / p.durationSeconds).clamp(0.0, 1.0);
       }
     }
 
+    // Register nav: row 0 = sort chips (3), rows 1+ = grid
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      // Always register at least 1 row so left-arrow can reach the sidebar.
-      final rowLengths = rows.isEmpty ? [1] : rows.map((r) => r.length).toList();
-      widget.nav.registerNav(rowLengths, (row, col) {
-        if (rows.isEmpty) return;
-        if (row < rows.length && col < rows[row].length) {
-          widget.onSelect(rows[row][col]);
+      final gridRowLengths = sortedItems.isEmpty
+          ? <int>[]
+          : TvPosterGrid.rowLengthsFor(seriesItems, _cols);
+      final allLengths = [3, ...gridRowLengths];
+      widget.nav.registerNav(allLengths, (row, col) {
+        if (row == 0) {
+          setState(() => _sort = _WatchlistSort.values[col]);
+        } else {
+          final index = (row - 1) * _cols + col;
+          if (index >= 0 && index < sortedItems.length) {
+            widget.onSelect(sortedItems[index].asSeriesResult);
+          }
         }
-      });
+      }, gridMode: true);
     });
 
     return ListView(
       controller: _scrollCtrl,
       padding: const EdgeInsets.only(bottom: 80),
       children: [
-        // ── Header ──────────────────────────────────────────────────────────
+        // ── Header ────────────────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(44, 40, 44, 6),
           child: Row(
@@ -120,7 +139,7 @@ class _WatchlistScreenState extends ConsumerState<WatchlistScreen> {
               ),
               const SizedBox(width: 13),
               const Text(
-                'Meine Liste',
+                'Watchlist',
                 style: TextStyle(
                   fontSize: 36,
                   fontWeight: FontWeight.w800,
@@ -138,10 +157,45 @@ class _WatchlistScreenState extends ConsumerState<WatchlistScreen> {
           ),
         ),
 
-        const SizedBox(height: 32),
+        // ── Sort chips ────────────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(44, 16, 44, 0),
+          child: ListenableBuilder(
+            listenable: widget.nav,
+            builder: (_, _) => Row(
+              children: [
+                _SortChip(
+                  label: 'Zuletzt angeschaut',
+                  icon: Icons.history_rounded,
+                  selected: _sort == _WatchlistSort.recentlyWatched,
+                  focused: widget.nav.isItemFocused(0, 0),
+                  onTap: () => setState(() => _sort = _WatchlistSort.recentlyWatched),
+                ),
+                const SizedBox(width: 10),
+                _SortChip(
+                  label: 'Neue Folgen',
+                  icon: Icons.fiber_new_rounded,
+                  selected: _sort == _WatchlistSort.newContent,
+                  focused: widget.nav.isItemFocused(0, 1),
+                  onTap: () => setState(() => _sort = _WatchlistSort.newContent),
+                ),
+                const SizedBox(width: 10),
+                _SortChip(
+                  label: 'A–Z',
+                  icon: Icons.sort_by_alpha_rounded,
+                  selected: _sort == _WatchlistSort.alphabetical,
+                  focused: widget.nav.isItemFocused(0, 2),
+                  onTap: () => setState(() => _sort = _WatchlistSort.alphabetical),
+                ),
+              ],
+            ),
+          ),
+        ),
 
-        // ── Empty state ──────────────────────────────────────────────────────
-        if (items.isEmpty)
+        const SizedBox(height: 28),
+
+        // ── Empty state ────────────────────────────────────────────────────────
+        if (sortedItems.isEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 80),
             child: Center(
@@ -155,7 +209,7 @@ class _WatchlistScreenState extends ConsumerState<WatchlistScreen> {
                   ),
                   const SizedBox(height: 18),
                   const Text(
-                    'Noch keine Serien gespeichert',
+                    'Noch keine Serien in der Watchlist',
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
@@ -172,46 +226,127 @@ class _WatchlistScreenState extends ConsumerState<WatchlistScreen> {
             ),
           )
         else
-          // ── Poster grid ────────────────────────────────────────────────────
-          ...List.generate(rows.length, (ri) {
-            return Padding(
-              key: _rowKeys.putIfAbsent(ri, GlobalKey.new),
-              padding: const EdgeInsets.fromLTRB(44, 0, 44, 20),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ...List.generate(
-                    rows[ri].length,
-                    (ci) => Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                            right: ci < rows[ri].length - 1 ? 14 : 0),
-                        child: AspectRatio(
-                          aspectRatio: 2 / 3,
-                          child: ListenableBuilder(
-                            listenable: widget.nav,
-                            builder: (_, _) => RsPosterCard(
-                              item: rows[ri][ci],
-                              focused: widget.nav.isItemFocused(ri, ci),
-                              inGrid: true,
-                              progressFraction: progressMap[rows[ri][ci].url],
-                              onTap: () => widget.onSelect(rows[ri][ci]),
+          // ── Poster grid with badges ──────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.only(bottom: 20),
+            child: TvPosterGrid(
+              nav: widget.nav,
+              items: seriesItems,
+              cols: _cols,
+              navRowOffset: 1,
+              progressMap: progressMap,
+              onSelect: widget.onSelect,
+              itemBuilder: (item, focused, onTap) {
+                final entry = entryMap[item.url];
+                final badge = entry?.newContent;
+                return Stack(
+                  children: [
+                    RsPosterCard(
+                      item: item,
+                      focused: focused,
+                      inGrid: true,
+                      progressFraction: progressMap[item.url],
+                      onTap: onTap,
+                    ),
+                    if (badge != null)
+                      Positioned(
+                        top: 8,
+                        left: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: badge == 'season'
+                                ? const Color(0xFF4CAF50)
+                                : Rs.accent,
+                            borderRadius: BorderRadius.circular(6),
+                            boxShadow: const [
+                              BoxShadow(
+                                  color: Colors.black38,
+                                  blurRadius: 4,
+                                  offset: Offset(0, 2))
+                            ],
+                          ),
+                          child: Text(
+                            badge == 'season' ? 'NEUE STAFFEL' : 'NEUE FOLGE',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                  // Fill remaining columns so partial rows align left
-                  ...List.generate(
-                    _cols - rows[ri].length,
-                    (_) => const Expanded(child: SizedBox()),
-                  ),
-                ],
-              ),
-            );
-          }),
+                  ],
+                );
+              },
+            ),
+          ),
       ],
+    );
+  }
+}
+
+// ── Sort chip widget ──────────────────────────────────────────────────────────
+
+class _SortChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final bool focused;
+  final VoidCallback onTap;
+
+  const _SortChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.focused,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+        decoration: BoxDecoration(
+          color: selected
+              ? Rs.accent
+              : focused
+                  ? Colors.white.withValues(alpha: 0.12)
+                  : Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: focused && !selected
+                ? Rs.accent.withValues(alpha: 0.7)
+                : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: selected ? Colors.white : Rs.muted,
+            ),
+            const SizedBox(width: 7),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : Rs.muted,
+                fontSize: 14,
+                fontWeight:
+                    selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

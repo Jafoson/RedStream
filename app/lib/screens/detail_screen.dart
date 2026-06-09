@@ -38,6 +38,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   bool _resumeIsNextEp = false;
   bool _inWatchlist = false;
   int? _autosyncJobId;
+  final _playFocusNode = FocusNode();
+  List<FocusNode> _seasonFocusNodes = [];
 
   @override
   void initState() {
@@ -45,28 +47,36 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     _loadDetail();
   }
 
-  void _computeResume(List<WatchProgress> allProgress) {
-    final forSeries = allProgress
-        .where((p) => p.seriesUrl == widget.seriesUrl)
-        .toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  @override
+  void dispose() {
+    _playFocusNode.dispose();
+    for (final n in _seasonFocusNodes) n.dispose();
+    super.dispose();
+  }
 
-    final last = forSeries.firstOrNull;
-    if (last == null) {
+  void _computeResume(List<WatchProgress> allProgress) {
+    // Only consider episodes that were meaningfully started (>30 s watched).
+    final forSeries = allProgress
+        .where((p) => p.seriesUrl == widget.seriesUrl && p.started)
+        .toList()
+      ..sort((a, b) {
+        // Sort by furthest-watched episode (highest season, then highest episode).
+        final sc = b.season.compareTo(a.season);
+        if (sc != 0) return sc;
+        return b.episodeNumber.compareTo(a.episodeNumber);
+      });
+
+    if (forSeries.isEmpty) {
       _resumeProgress = null;
       _resumeIsNextEp = false;
       return;
     }
-    if (last.completed) {
-      _resumeProgress = last;
-      _resumeIsNextEp = true;
-    } else {
-      final inProgress = forSeries
-          .where((p) => !p.completed && p.positionSeconds > 30)
-          .firstOrNull;
-      _resumeProgress = inProgress ?? last;
-      _resumeIsNextEp = _resumeProgress?.completed ?? false;
-    }
+
+    // Frontier: the furthest episode the user has ever reached.
+    // Re-watching an earlier episode never moves this backwards.
+    final frontier = forSeries.first;
+    _resumeProgress = frontier;
+    _resumeIsNextEp = frontier.completed;
   }
 
   Future<void> _loadDetail() async {
@@ -82,14 +92,30 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
       if (!mounted) return;
       final allProgress = results[2] as List<WatchProgress>;
       _computeResume(allProgress);
+      final seasons = results[1] as List<Season>;
+      // Jump to the season the user last watched
+      int initialSeason = 0;
+      if (_resumeProgress != null && seasons.isNotEmpty) {
+        final idx = seasons.indexWhere(
+            (s) => s.seasonNumber == _resumeProgress!.season);
+        if (idx >= 0) initialSeason = idx;
+      }
+      // Build per-season FocusNodes
+      for (final n in _seasonFocusNodes) { n.dispose(); }
+      _seasonFocusNodes = List.generate(seasons.length, (_) => FocusNode());
+
       setState(() {
         _detail = results[0] as SeriesDetail;
-        _seasons = results[1] as List<Season>;
+        _seasons = seasons;
+        _selectedSeason = initialSeason;
         _inWatchlist = results[3] as bool;
         _autosyncJobId = results[4] as int?;
         _loading = false;
       });
-      if (_seasons.isNotEmpty) _loadEpisodes(_seasons[0], prefetch: true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _playFocusNode.requestFocus();
+      });
+      if (_seasons.isNotEmpty) _loadEpisodes(_seasons[initialSeason], prefetch: true);
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
@@ -180,6 +206,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         episodeUrls: [ep.url],
         language: lang,
         provider: 'VOE',
+        priority: 1, // prefetch: background download while browsing detail page
       );
     } catch (_) {}
   }
@@ -291,11 +318,26 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     return Focus(
       autofocus: true,
       onKeyEvent: (_, event) {
-        if (event is KeyDownEvent &&
-            (event.logicalKey == LogicalKeyboardKey.escape ||
-                event.logicalKey == LogicalKeyboardKey.backspace ||
-                event.logicalKey == LogicalKeyboardKey.goBack)) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        final key = event.logicalKey;
+        if (key == LogicalKeyboardKey.escape ||
+            key == LogicalKeyboardKey.backspace ||
+            key == LogicalKeyboardKey.goBack) {
           Navigator.of(context).maybePop();
+          return KeyEventResult.handled;
+        }
+        // Down from play button → jump to the currently selected season tab
+        if (key == LogicalKeyboardKey.arrowDown &&
+            _playFocusNode.hasFocus &&
+            _seasonFocusNodes.isNotEmpty) {
+          _seasonFocusNodes[_selectedSeason.clamp(0, _seasonFocusNodes.length - 1)]
+              .requestFocus();
+          return KeyEventResult.handled;
+        }
+        // Up from any season tab → return to play button
+        if (key == LogicalKeyboardKey.arrowUp &&
+            _seasonFocusNodes.any((n) => n.hasFocus)) {
+          _playFocusNode.requestFocus();
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;
@@ -322,6 +364,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                     onResume: _playFromResume,
                     inWatchlist: _inWatchlist,
                     onToggleWatchlist: _toggleWatchlist,
+                    playFocusNode: _playFocusNode,
+                    seasonFocusNodes: _seasonFocusNodes,
                   ),
       ),
     );
@@ -347,6 +391,8 @@ class _DetailBody extends StatelessWidget {
   final VoidCallback onResume;
   final bool inWatchlist;
   final VoidCallback onToggleWatchlist;
+  final FocusNode? playFocusNode;
+  final List<FocusNode> seasonFocusNodes;
 
   const _DetailBody({
     required this.detail,
@@ -363,6 +409,8 @@ class _DetailBody extends StatelessWidget {
     required this.onResume,
     required this.inWatchlist,
     required this.onToggleWatchlist,
+    this.playFocusNode,
+    this.seasonFocusNodes = const [],
   });
 
   @override
@@ -380,6 +428,7 @@ class _DetailBody extends StatelessWidget {
           onResume: onResume,
           inWatchlist: inWatchlist,
           onToggleWatchlist: onToggleWatchlist,
+          playFocusNode: playFocusNode,
         ),
 
         // ── Season tabs ─────────────────────────────────────────────────────
@@ -392,6 +441,7 @@ class _DetailBody extends StatelessWidget {
             seasons: seasons,
             selected: selectedSeason,
             onSelect: onSelectSeason,
+            focusNodes: seasonFocusNodes,
           ),
         ],
 
@@ -430,6 +480,7 @@ class _HeroSection extends StatelessWidget {
   final VoidCallback onResume;
   final bool inWatchlist;
   final VoidCallback onToggleWatchlist;
+  final FocusNode? playFocusNode;
 
   const _HeroSection({
     required this.detail,
@@ -440,6 +491,7 @@ class _HeroSection extends StatelessWidget {
     required this.onResume,
     required this.inWatchlist,
     required this.onToggleWatchlist,
+    this.playFocusNode,
   });
 
   @override
@@ -581,7 +633,7 @@ class _HeroSection extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     TvFocusable(
-                      autofocus: true,
+                      focusNode: playFocusNode,
                       onActivate: resumeProgress != null ? onResume : onPlay,
                       borderRadius: BorderRadius.circular(14),
                       child: Container(
@@ -605,8 +657,8 @@ class _HeroSection extends StatelessWidget {
                             Text(
                               resumeProgress != null
                                   ? resumeIsNextEp
-                                      ? 'Nächste Folge E${resumeProgress!.episodeNumber + 1}'
-                                      : 'Fortsetzen E${resumeProgress!.episodeNumber}'
+                                      ? 'Nächste Folge S${resumeProgress!.season} E${resumeProgress!.episodeNumber + 1}'
+                                      : 'Fortsetzen S${resumeProgress!.season} E${resumeProgress!.episodeNumber}'
                                   : 'Abspielen',
                               style: TextStyle(
                                   color: resumeProgress != null ? Colors.black : Colors.white,
@@ -673,7 +725,7 @@ class _HeroSection extends StatelessWidget {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              inWatchlist ? 'In meiner Liste' : 'Meine Liste',
+                              inWatchlist ? 'In der Watchlist' : 'Watchlist',
                               style: TextStyle(
                                 color: inWatchlist ? Rs.accent : Colors.white,
                                 fontWeight: FontWeight.w700,
@@ -762,8 +814,14 @@ class _SeasonBar extends StatelessWidget {
   final List<Season> seasons;
   final int selected;
   final void Function(int) onSelect;
-  const _SeasonBar(
-      {required this.seasons, required this.selected, required this.onSelect});
+  final List<FocusNode> focusNodes;
+
+  const _SeasonBar({
+    required this.seasons,
+    required this.selected,
+    required this.onSelect,
+    this.focusNodes = const [],
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -776,6 +834,7 @@ class _SeasonBar extends StatelessWidget {
           return Padding(
             padding: const EdgeInsets.only(right: 12),
             child: TvFocusable(
+              focusNode: i < focusNodes.length ? focusNodes[i] : null,
               onActivate: () => onSelect(i),
               borderRadius: BorderRadius.circular(11),
               child: AnimatedContainer(

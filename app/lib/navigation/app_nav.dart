@@ -14,6 +14,7 @@ class AppNavController extends ChangeNotifier {
 
   List<int> _rowLengths = [];
   void Function(int row, int col)? _activateCb;
+  bool _gridMode = false;
   String? _toast;
 
   // Remembers the last (row, col) for each screen so navigating back
@@ -24,15 +25,15 @@ class AppNavController extends ChangeNotifier {
   // Cleared when switching screens so each screen starts fresh.
   final _rowCols = <int, int>{};
 
-  static const _sidebarCount = 8;
+  static const _sidebarCount = 9; // 8 nav items + 1 profile tile
   static const _navScreens = [
     NavScreen.home,
+    NavScreen.watchlist,
     NavScreen.serien,
     NavScreen.anime,
     NavScreen.search,
     NavScreen.queue,
     NavScreen.library,
-    NavScreen.watchlist,
     NavScreen.settings,
   ];
 
@@ -41,6 +42,10 @@ class AppNavController extends ChangeNotifier {
   // ── Global key handler ───────────────────────────────────────────────────
   // Uses HardwareKeyboard so key events are captured before Flutter's own
   // focus/traversal system can redirect D-pad presses to a ListView.
+
+  /// Called when the user presses Enter/A on the profile switch tile in the sidebar.
+  VoidCallback? _profileSwitchCb;
+  void setProfileSwitchCallback(VoidCallback cb) { _profileSwitchCb = cb; }
 
   bool _attached = false;
 
@@ -115,9 +120,17 @@ class AppNavController extends ChangeNotifier {
   /// Called by each screen to register row lengths and the activate callback.
   /// Clamps the current (possibly restored) position to valid bounds and
   /// notifies listeners so screens can auto-scroll to the restored row.
-  void registerNav(List<int> rowLengths, void Function(int row, int col) onActivate) {
+  /// [gridMode] enables two grid-specific behaviours:
+  /// - Down/Up keeps the current column instead of resetting to 0 on first visit.
+  /// - Right at the last column wraps to the first item of the next row.
+  void registerNav(
+    List<int> rowLengths,
+    void Function(int row, int col) onActivate, {
+    bool gridMode = false,
+  }) {
     _rowLengths = List.of(rowLengths);
     _activateCb = onActivate;
+    _gridMode = gridMode;
     if (_rowLengths.isNotEmpty) {
       contentRow = contentRow.clamp(0, _rowLengths.length - 1);
       final maxCol = (_rowLengths[contentRow] - 1).clamp(0, 9999);
@@ -186,11 +199,13 @@ class AppNavController extends ChangeNotifier {
       if (newIdx != sidebarIndex) {
         _savePosition();
         sidebarIndex = newIdx;
-        final newScreen = _navScreens[sidebarIndex];
-        screen = newScreen;
-        _rowLengths = [];
-        _rowCols.clear();
-        _restorePosition(newScreen);
+        if (sidebarIndex < _navScreens.length) {
+          final newScreen = _navScreens[sidebarIndex];
+          screen = newScreen;
+          _rowLengths = [];
+          _rowCols.clear();
+          _restorePosition(newScreen);
+        }
       }
       notifyListeners();
     } else if (key == LogicalKeyboardKey.arrowDown) {
@@ -198,16 +213,23 @@ class AppNavController extends ChangeNotifier {
       if (newIdx != sidebarIndex) {
         _savePosition();
         sidebarIndex = newIdx;
-        final newScreen = _navScreens[sidebarIndex];
-        screen = newScreen;
-        _rowLengths = [];
-        _rowCols.clear();
-        _restorePosition(newScreen);
+        if (sidebarIndex < _navScreens.length) {
+          final newScreen = _navScreens[sidebarIndex];
+          screen = newScreen;
+          _rowLengths = [];
+          _rowCols.clear();
+          _restorePosition(newScreen);
+        }
       }
       notifyListeners();
     } else if (key == LogicalKeyboardKey.arrowRight || _isConfirm(key)) {
-      sidebarFocused = false;
-      notifyListeners();
+      if (sidebarIndex >= _navScreens.length) {
+        // Profile switch tile — hand off to HomeScreen which handles detach/attach.
+        _profileSwitchCb?.call();
+      } else {
+        sidebarFocused = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -227,21 +249,31 @@ class AppNavController extends ChangeNotifier {
       if (contentCol < max) {
         contentCol++;
         notifyListeners();
+      } else if (_gridMode && contentRow < _rowLengths.length - 1) {
+        // Grid mode: wrap to first item of next row
+        _rowCols[contentRow] = contentCol;
+        contentRow++;
+        contentCol = 0;
+        notifyListeners();
       }
     } else if (key == LogicalKeyboardKey.arrowUp) {
       if (contentRow > 0) {
-        _rowCols[contentRow] = contentCol; // save current row's col
+        final prevCol = contentCol;
+        _rowCols[contentRow] = contentCol;
         contentRow--;
         final max = (_rowLengths[contentRow] - 1).clamp(0, 9999);
-        contentCol = (_rowCols[contentRow] ?? 0).clamp(0, max);
+        // Grid mode: keep same column; otherwise reset to 0 on first visit
+        contentCol = (_rowCols[contentRow] ?? (_gridMode ? prevCol : 0)).clamp(0, max);
         notifyListeners();
       }
     } else if (key == LogicalKeyboardKey.arrowDown) {
       if (contentRow < _rowLengths.length - 1) {
-        _rowCols[contentRow] = contentCol; // save current row's col
+        final prevCol = contentCol;
+        _rowCols[contentRow] = contentCol;
         contentRow++;
         final max = (_rowLengths[contentRow] - 1).clamp(0, 9999);
-        contentCol = (_rowCols[contentRow] ?? 0).clamp(0, max);
+        // Grid mode: keep same column; otherwise reset to 0 on first visit
+        contentCol = (_rowCols[contentRow] ?? (_gridMode ? prevCol : 0)).clamp(0, max);
         notifyListeners();
       }
     } else if (_isConfirm(key)) {

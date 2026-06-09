@@ -232,6 +232,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _resetHideTimer();
       }
 
+      _prefetchNextEpisode(); // fire-and-forget
+
       widget.api
           .getSkipTimes(
               seriesTitle: widget.seriesTitle, episode: _activeEpisode)
@@ -380,6 +382,44 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
+  // ── Prefetch ───────────────────────────────────────────────────────────────
+
+  /// Silently enqueue the next episode as P1 (prefetch) so it's ready to play
+  /// without waiting when the current episode ends.
+  Future<void> _prefetchNextEpisode() async {
+    final curUrl = _activeEpisodeUrl ?? '';
+    final seriesUrl = widget.seriesUrl;
+    if (curUrl.isEmpty || seriesUrl == null || seriesUrl.isEmpty) return;
+
+    final nextEp = _activeEpisode + 1;
+
+    final nextEpUrl = curUrl.replaceAllMapped(
+        RegExp(r'episode-(\d+)$'), (_) => 'episode-$nextEp');
+    if (nextEpUrl == curUrl) return; // URL pattern not recognised
+
+    // Already downloaded?
+    final streamUrl = await _findNextEpStreamUrl(nextEp);
+    if (streamUrl.isNotEmpty) return;
+
+    // Already queued or running?
+    try {
+      final existingId = await widget.api.findQueueItemByEpisode(nextEpUrl);
+      if (existingId != null) return;
+    } catch (_) {}
+
+    // Enqueue as prefetch (P2) — fire-and-forget, errors are silently ignored
+    try {
+      await widget.api.enqueueDownload(
+        title: widget.seriesTitle,
+        seriesUrl: seriesUrl,
+        episodeUrls: [nextEpUrl],
+        language: 'German Dub',
+        provider: 'VOE',
+        priority: 2,
+      );
+    } catch (_) {}
+  }
+
   static String _normFolder(String s) => s
       .replaceAll(RegExp(r'\(.*?\)|\[.*?\]'), '')
       .toLowerCase()
@@ -499,6 +539,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       setState(() => _loading = false);
       _resetHideTimer();
     }
+
+    _prefetchNextEpisode(); // prefetch the episode after this one
 
     widget.api
         .getSkipTimes(seriesTitle: widget.seriesTitle, episode: nextEp)

@@ -6,8 +6,58 @@ import 'api_client.dart';
 class ApiService {
   final Dio _dio;
   final String serverUrl;
+  final int? profileId;
+  final String? authToken;
 
-  ApiService(this.serverUrl) : _dio = buildDio(serverUrl);
+  ApiService(this.serverUrl, {this.profileId, this.authToken})
+      : _dio = buildDio(serverUrl, profileId: profileId, authToken: authToken);
+
+  // ── Auth ─────────────────────────────────────────────────────────────────
+  Future<({bool authEnabled, bool setupNeeded})> checkAuth() async {
+    final resp = await _dio.get<Map<String, dynamic>>('/api/auth/check');
+    final data = resp.data!;
+    return (
+      authEnabled: (data['auth_enabled'] as bool?) ?? false,
+      setupNeeded: (data['setup_needed'] as bool?) ?? false,
+    );
+  }
+
+  Future<Map<String, String>> login(String username, String password) async {
+    final resp = await _dio.post<Map<String, dynamic>>(
+      '/api/auth/login',
+      data: {'username': username, 'password': password},
+    );
+    final data = resp.data!;
+    return {
+      'token': data['token'] as String,
+      'username': data['username'] as String,
+      'role': data['role'] as String,
+    };
+  }
+
+  Future<Map<String, String>> setupAdmin(String username, String password) async {
+    final resp = await _dio.post<Map<String, dynamic>>(
+      '/api/auth/setup',
+      data: {'username': username, 'password': password},
+    );
+    final data = resp.data!;
+    return {
+      'token': data['token'] as String,
+      'username': data['username'] as String,
+      'role': data['role'] as String,
+    };
+  }
+
+  Future<Map<String, dynamic>> me() async {
+    final resp = await _dio.get<Map<String, dynamic>>('/api/auth/me');
+    return resp.data!;
+  }
+
+  Future<void> logout() async {
+    try {
+      await _dio.post<void>('/api/auth/logout');
+    } catch (_) {}
+  }
 
   // ── Proxy helper ────────────────────────────────────────────────────────
   /// Routes external poster URLs through the backend proxy so they load on TV.
@@ -136,6 +186,7 @@ class ApiService {
   }
 
   // ── Download queue ───────────────────────────────────────────────────────
+  // priority: 0=watch-intent, 1=prefetch, 2=manual(default), 3=autosync
   Future<int> enqueueDownload({
     required String title,
     required String seriesUrl,
@@ -143,6 +194,7 @@ class ApiService {
     required String language,
     required String provider,
     int? customPathId,
+    int priority = 2,
   }) async {
     final resp = await _dio.post<Map<String, dynamic>>(
       '/api/download',
@@ -152,6 +204,7 @@ class ApiService {
         'episodes': episodeUrls,
         'language': language,
         'provider': provider,
+        'priority': priority,
         if (customPathId case final id?) 'custom_path_id': id,
       },
     );
@@ -166,6 +219,16 @@ class ApiService {
       resp.data?['ffmpeg_progress'] as Map<String, dynamic>? ?? {},
     );
     return (items: items, ffmpeg: progress);
+  }
+
+  /// Returns the ID of an existing queued/running item that contains [episodeUrl],
+  /// or null if none exists.
+  Future<int?> findQueueItemByEpisode(String episodeUrl) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/queue/find-by-episode',
+      queryParameters: {'url': episodeUrl},
+    );
+    return resp.data?['queue_id'] as int?;
   }
 
   Future<void> cancelQueueItem(int id) =>
@@ -353,6 +416,21 @@ class ApiService {
         .toList();
   }
 
+  Future<List<WatchlistEntry>> getWatchlistEnriched() async {
+    final resp = await _dio.get<Map<String, dynamic>>('/api/watchlist/enriched');
+    final list = resp.data?['items'] as List? ?? [];
+    return list.map((e) {
+      final entry = WatchlistEntry.fromJson(e as Map<String, dynamic>);
+      return WatchlistEntry(
+        title: entry.title,
+        url: entry.url,
+        posterUrl: proxyImage(entry.posterUrl),
+        lastWatchedAt: entry.lastWatchedAt,
+        newContent: entry.newContent,
+      );
+    }).toList();
+  }
+
   Future<void> addToWatchlist(String seriesUrl, {required String title, String posterUrl = ''}) async {
     await _dio.post<void>('/api/watchlist', data: {
       'series_url': seriesUrl,
@@ -377,5 +455,31 @@ class ApiService {
   Future<Map<String, dynamic>> getSettings() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/settings');
     return resp.data ?? {};
+  }
+
+  // ── Profiles ──────────────────────────────────────────────────────────────
+  Future<List<Profile>> getProfiles() async {
+    final resp = await _dio.get<Map<String, dynamic>>('/api/profiles');
+    final list = resp.data?['profiles'] as List? ?? [];
+    return list.map((e) => Profile.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<int> createProfile(String name, String avatarColor) async {
+    final resp = await _dio.post<Map<String, dynamic>>(
+      '/api/profiles',
+      data: {'name': name, 'avatar_color': avatarColor},
+    );
+    return resp.data?['id'] as int? ?? 0;
+  }
+
+  Future<void> updateProfileData(int id, {String? name, String? avatarColor}) async {
+    await _dio.put<void>('/api/profiles/$id', data: {
+      'name': name,
+      'avatar_color': avatarColor,
+    });
+  }
+
+  Future<void> deleteProfile(int id) async {
+    await _dio.delete<void>('/api/profiles/$id');
   }
 }

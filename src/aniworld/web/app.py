@@ -39,7 +39,12 @@ from .db import (
     add_to_watchlist,
     cancel_queue_item,
     clear_completed,
+    create_api_token,
+    create_profile,
+    delete_api_token,
+    delete_profile,
     find_autosync_by_url,
+    find_queue_item_by_episode,
     get_all_watch_progress,
     get_autosync_job,
     get_autosync_jobs,
@@ -49,15 +54,20 @@ from .db import (
     get_episode_progress_for_urls,
     get_general_stats,
     get_next_queued,
+    get_next_queued_for_slot,
+    get_profiles,
     get_queue,
+    get_queue_item,
     get_queue_stats,
     get_running,
     get_sync_stats,
     get_watch_progress,
     get_watch_progress_for_series,
     get_watchlist,
+    get_watchlist_enriched,
     init_autosync_db,
     init_custom_paths_db,
+    init_profiles_db,
     init_queue_db,
     init_watch_progress_db,
     init_watchlist_db,
@@ -73,9 +83,11 @@ from .db import (
     clear_captcha_url,
     set_queue_status,
     update_autosync_job,
+    update_profile,
     update_queue_errors,
     update_queue_progress,
     upsert_watch_progress,
+    validate_api_token,
 )
 
 logger = get_logger(__name__)
@@ -159,9 +171,16 @@ _STO_SERIES_LINK_PATTERN = re.compile(
 )
 
 
-# Queue worker state
-_queue_worker_started = False
-_queue_lock = threading.Lock()
+# Download slot state
+# Slot A (express): P0 watch-intent + P1 prefetch
+# Slot B (normal):  P2 manual     + P3 autosync
+_express_lock = threading.Lock()
+_normal_lock = threading.Lock()
+_express_worker_started = False
+_normal_worker_started = False
+_express_running_id = None        # queue item ID currently in express slot
+_express_worker_thread_id = None  # OS thread ident of the express worker
+_express_preempt_id = None        # item ID to preempt (P1 → make way for P0)
 
 # Auto-sync worker state
 _autosync_worker_started = False
@@ -209,120 +228,204 @@ def _fetch_public_ip():
     raise RuntimeError(last_error or "Failed to resolve public IP")
 
 
-def _queue_worker():
-    """Single global worker that processes one download at a time."""
+def _build_selected_path(item):
+    """Compute the output directory for a queue item (None = use default)."""
+    import os
+    from pathlib import Path
+
+    lang_sep = os.environ.get("ANIWORLD_LANG_SEPARATION", "0") == "1"
+    if item.get("source") == "sync:all_langs":
+        lang_sep = True
+
+    custom_path_id = item.get("custom_path_id")
+    base = None
+    if custom_path_id:
+        cp = get_custom_path_by_id(custom_path_id)
+        if cp:
+            base = Path(cp["path"]).expanduser()
+            if not base.is_absolute():
+                base = Path.home() / base
+
+    if base is None:
+        raw = os.environ.get("ANIWORLD_DOWNLOAD_PATH", "")
+        if raw:
+            base = Path(raw).expanduser()
+            if not base.is_absolute():
+                base = Path.home() / base
+        else:
+            base = Path.home() / "Downloads"
+
+    if lang_sep:
+        lang_folder_map = {
+            "German Dub": "german-dub",
+            "English Sub": "english-sub",
+            "German Sub": "german-sub",
+            "English Dub": "english-dub",
+        }
+        lang_folder = lang_folder_map.get(
+            item["language"], item["language"].lower().replace(" ", "-")
+        )
+        return str(base / lang_folder)
+    if custom_path_id:
+        return str(base)
+    return None
+
+
+def _run_queue_item(item, slot="normal"):
+    """Download all episodes for *item*. Returns True if item was preempted."""
+    global _express_preempt_id, _express_running_id
+
+    from ..models.common.common import kill_active_ffmpeg
+    from ..playwright import captcha as _captcha_mod
+
+    episodes = json.loads(item["episodes"])
+    errors = []
+    selected_path = _build_selected_path(item)
+    preempted = False
+
+    for i, ep_url in enumerate(episodes):
+        # Express slot: check if a P0 item arrived and wants to preempt this P1
+        if slot == "express" and _express_preempt_id == item["id"]:
+            logger.info(
+                "Preempted before episode %d for '%s' — requeueing", i, item["title"]
+            )
+            preempted = True
+            break
+
+        update_queue_progress(item["id"], i, ep_url)
+        try:
+            prov = resolve_provider(ep_url)
+            ep_kwargs = {
+                "url": ep_url,
+                "selected_language": item["language"],
+                "selected_provider": item["provider"],
+            }
+            if selected_path:
+                ep_kwargs["selected_path"] = selected_path
+            episode = prov.episode_cls(**ep_kwargs)
+            _captcha_mod._local.queue_id = item["id"]
+            try:
+                episode.download()
+            finally:
+                _captcha_mod._local.queue_id = None
+        except Exception as e:
+            _captcha_mod._local.queue_id = None
+            # Was FFmpeg killed due to preemption?
+            if slot == "express" and _express_preempt_id == item["id"]:
+                logger.info(
+                    "Preempted mid-episode for '%s' — requeueing", item["title"]
+                )
+                preempted = True
+                break
+            logger.error(f"Download failed for {ep_url}: {e}")
+            errors.append({"url": ep_url, "error": str(e)})
+            update_queue_errors(item["id"], json.dumps(errors))
+
+        if is_queue_cancelled(item["id"]):
+            logger.info(f"Download cancelled for queue item {item['id']}")
+            update_queue_progress(item["id"], i + 1, "")
+            return False
+
+    if preempted:
+        # Reset item so it's picked up again after P0 finishes
+        set_queue_status(item["id"], "queued")
+        update_queue_progress(item["id"], 0, "")
+        with _express_lock:
+            _express_preempt_id = None
+            _express_running_id = None
+        return True
+
+    if not is_queue_cancelled(item["id"]):
+        update_queue_progress(item["id"], len(episodes), "")
+        status = "failed" if errors and len(errors) == len(episodes) else "completed"
+        set_queue_status(item["id"], status)
+    return False
+
+
+def _express_slot_worker():
+    """Slot A — P0 watch-intent and P1 prefetch."""
+    global _express_running_id, _express_worker_thread_id
+    _express_worker_thread_id = threading.current_thread().ident
+
     while True:
         try:
             item = None
-            with _queue_lock:
-                if not get_running():
-                    item = get_next_queued()
-                    if item:
-                        set_queue_status(item["id"], "running")
+            with _express_lock:
+                item = get_next_queued_for_slot("express")
+                if item:
+                    set_queue_status(item["id"], "running")
+                    _express_running_id = item["id"]
+
+            if not item:
+                time.sleep(2)
+                continue
+
+            logger.info(
+                "Express slot: P%d '%s'", item.get("priority", "?"), item["title"]
+            )
+            _run_queue_item(item, slot="express")
+
+            with _express_lock:
+                if _express_running_id == item["id"]:
+                    _express_running_id = None
+
+        except Exception as e:
+            logger.error(f"Express worker error: {e}", exc_info=True)
+            with _express_lock:
+                _express_running_id = None
+            time.sleep(3)
+
+
+def _normal_slot_worker():
+    """Slot B — P2 manual queue and P3 autosync."""
+    while True:
+        try:
+            item = None
+            with _normal_lock:
+                item = get_next_queued_for_slot("normal")
+                if item:
+                    set_queue_status(item["id"], "running")
 
             if not item:
                 time.sleep(3)
                 continue
 
-            episodes = json.loads(item["episodes"])
-            errors = []
-
-            # Language separation: compute subfolder path if enabled
-            import os
-
-            lang_sep = os.environ.get("ANIWORLD_LANG_SEPARATION", "0") == "1"
-            if item.get("source") == "sync:all_langs":
-                lang_sep = True
-            selected_path = None
-
-            from pathlib import Path
-
-            # Determine base path: custom path or default
-            custom_path_id = item.get("custom_path_id")
-            if custom_path_id:
-                cp = get_custom_path_by_id(custom_path_id)
-                if cp:
-                    base = Path(cp["path"]).expanduser()
-                    if not base.is_absolute():
-                        base = Path.home() / base
-                else:
-                    base = None
-            else:
-                base = None
-
-            if base is None:
-                raw = os.environ.get("ANIWORLD_DOWNLOAD_PATH", "")
-                if raw:
-                    base = Path(raw).expanduser()
-                    if not base.is_absolute():
-                        base = Path.home() / base
-                else:
-                    base = Path.home() / "Downloads"
-
-            if lang_sep:
-                lang_folder_map = {
-                    "German Dub": "german-dub",
-                    "English Sub": "english-sub",
-                    "German Sub": "german-sub",
-                    "English Dub": "english-dub",
-                }
-                lang_folder = lang_folder_map.get(
-                    item["language"], item["language"].lower().replace(" ", "-")
-                )
-                selected_path = str(base / lang_folder)
-            elif custom_path_id:
-                selected_path = str(base)
-
-            from ..playwright import captcha as _captcha_mod
-
-            for i, ep_url in enumerate(episodes):
-                update_queue_progress(item["id"], i, ep_url)
-                try:
-                    prov = resolve_provider(ep_url)
-                    ep_kwargs = {
-                        "url": ep_url,
-                        "selected_language": item["language"],
-                        "selected_provider": item["provider"],
-                    }
-                    if selected_path:
-                        ep_kwargs["selected_path"] = selected_path
-                    episode = prov.episode_cls(**ep_kwargs)
-                    _captcha_mod._local.queue_id = item["id"]
-                    try:
-                        episode.download()
-                    finally:
-                        _captcha_mod._local.queue_id = None
-                except Exception as e:
-                    _captcha_mod._local.queue_id = None
-                    logger.error(f"Download failed for {ep_url}: {e}")
-                    errors.append({"url": ep_url, "error": str(e)})
-                    update_queue_errors(item["id"], json.dumps(errors))
-
-                # Check for cancellation after each episode
-                if is_queue_cancelled(item["id"]):
-                    logger.info(f"Download cancelled for queue item {item['id']}")
-                    update_queue_progress(item["id"], i + 1, "")
-                    break
-
-            # Only set final status if not already cancelled
-            if not is_queue_cancelled(item["id"]):
-                update_queue_progress(item["id"], len(episodes), "")
-                status = (
-                    "failed" if errors and len(errors) == len(episodes) else "completed"
-                )
-                set_queue_status(item["id"], status)
+            logger.info(
+                "Normal slot: P%d '%s'", item.get("priority", "?"), item["title"]
+            )
+            _run_queue_item(item, slot="normal")
 
         except Exception as e:
-            logger.error(f"Queue worker error: {e}", exc_info=True)
+            logger.error(f"Normal worker error: {e}", exc_info=True)
             time.sleep(3)
 
 
+def _maybe_preempt_express_for_p0():
+    """If the express slot is running a P1 item and a P0 just arrived, interrupt."""
+    global _express_preempt_id
+    from ..models.common.common import kill_active_ffmpeg
+
+    with _express_lock:
+        current_id = _express_running_id
+        if current_id is None:
+            return
+        item = get_queue_item(current_id)
+        if not item or item.get("priority", 2) != 1:
+            return  # Only preempt P1, never interrupt another P0
+        _express_preempt_id = current_id
+        thread_id = _express_worker_thread_id
+
+    logger.info("Preempting P1 express item %d for incoming P0 watch-intent", current_id)
+    kill_active_ffmpeg(thread_id=thread_id)
+
+
 def _ensure_queue_worker():
-    """Start the queue worker thread once."""
-    global _queue_worker_started
-    if _queue_worker_started:
+    """Start both download slot workers once."""
+    global _express_worker_started, _normal_worker_started
+    if _express_worker_started:
         return
-    _queue_worker_started = True
+    _express_worker_started = True
+    _normal_worker_started = True
 
     from .db import get_db
 
@@ -336,8 +439,12 @@ def _ensure_queue_worker():
     finally:
         conn.close()
 
-    thread = threading.Thread(target=_queue_worker, daemon=True)
-    thread.start()
+    threading.Thread(
+        target=_express_slot_worker, daemon=True, name="express-slot"
+    ).start()
+    threading.Thread(
+        target=_normal_slot_worker, daemon=True, name="normal-slot"
+    ).start()
 
 
 def _is_user_caught_up(series_url, last_ep):
@@ -382,8 +489,10 @@ def _run_autosync_for_job(job):
         series = prov.series_cls(url=job["series_url"])
 
         # Collect all episodes in season order (stable index for tracking)
+        all_seasons = series.seasons
+        season_count = len(all_seasons)
         all_episodes = []
-        for season in series.seasons:
+        for season in all_seasons:
             season_obj = prov.season_cls(url=season.url, series=series)
             for ep in season_obj.episodes:
                 all_episodes.append(ep)
@@ -395,16 +504,18 @@ def _run_autosync_for_job(job):
         update_fields = {
             "last_check": now_str,
             "episodes_found": current_count,
+            "seasons_found": season_count,
         }
 
         # First run: record baseline so we know what was available when tracking started.
         # Don't queue anything — we only act on episodes that appear *after* this point.
         if queued_up_to == 0:
             logger.info(
-                "Auto-sync '%s': first run, baseline = %d episodes.",
-                job.get("title", "?"), current_count,
+                "Auto-sync '%s': first run, baseline = %d episodes, %d season(s).",
+                job.get("title", "?"), current_count, season_count,
             )
             update_fields["episodes_queued_up_to"] = current_count
+            update_fields["seasons_queued_up_to"] = season_count
             update_autosync_job(job["id"], **update_fields)
             return
 
@@ -617,6 +728,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                 return None
             if request.endpoint == "static":
                 return None
+            if request.path.startswith("/api/"):
+                return None  # API routes handle their own auth via login_required
             if not app.config.get("FORCE_SSO", False) and not has_any_admin():
                 return redirect(url_for("auth.setup"))
             return None
@@ -649,6 +762,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             }
 
     # Initialize download queue, custom paths, autosync and watch progress (works with or without auth)
+    init_profiles_db()
     init_queue_db()
     init_custom_paths_db()
     init_autosync_db()
@@ -679,6 +793,15 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         return response
 
     @app.before_request
+    def _set_profile_id():
+        from flask import g as _g
+        raw = request.headers.get("X-Profile-ID", "").strip()
+        try:
+            _g.profile_id = int(raw) if raw else 1
+        except (ValueError, TypeError):
+            _g.profile_id = 1
+
+    @app.before_request
     def _enforce_json_content_type():
         """Reject non-JSON POST/PUT/DELETE on API routes to prevent form-based CSRF bypass."""
         if request.method in ("POST", "PUT", "DELETE") and request.path.startswith(
@@ -690,6 +813,16 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                     return jsonify(
                         {"error": "Content-Type must be application/json"}
                     ), 415
+
+    @app.route("/api/auth/check")
+    def api_auth_check():
+        if not auth_enabled:
+            return jsonify({"auth_enabled": False, "setup_needed": False})
+        from .db import has_any_admin as _has_any_admin
+        return jsonify({
+            "auth_enabled": True,
+            "setup_needed": not _has_any_admin(),
+        })
 
     @app.route("/")
     def index():
@@ -910,8 +1043,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             downloaded_eps = set(downloaded_info.keys())
 
             # Bulk-fetch watch progress for all episodes in this season
+            from flask import g as _g
             ep_urls = [ep.url for ep in season.episodes]
-            progress_map = get_episode_progress_for_urls(ep_urls)
+            progress_map = get_episode_progress_for_urls(ep_urls, profile_id=getattr(_g, "profile_id", 1))
 
             episodes_data = []
             for ep in season.episodes:
@@ -1019,6 +1153,13 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                 )
 
         custom_path_id = data.get("custom_path_id")
+        # priority: 0=watch-intent, 1=prefetch, 2=manual(default), 3=autosync
+        priority = data.get("priority")
+        if priority is not None:
+            try:
+                priority = int(priority)
+            except (TypeError, ValueError):
+                priority = None
 
         queue_id = add_to_queue(
             title,
@@ -1028,7 +1169,14 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             provider,
             username,
             custom_path_id=custom_path_id,
+            priority=priority,
         )
+
+        # P0 watch-intent: preempt any P1 prefetch running in the express slot
+        if priority == 0:
+            _maybe_preempt_express_for_p0()
+
+        _ensure_queue_worker()
         return jsonify({"queue_id": queue_id})
 
     @app.route("/api/queue")
@@ -1070,6 +1218,14 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
     def api_queue_clear():
         clear_completed()
         return jsonify({"ok": True})
+
+    @app.route("/api/queue/find-by-episode")
+    def api_queue_find_by_episode():
+        episode_url = request.args.get("url", "").strip()
+        if not episode_url:
+            return jsonify({"queue_id": None})
+        item = find_queue_item_by_episode(episode_url)
+        return jsonify({"queue_id": item["id"] if item else None})
 
     # ── Captcha endpoints ─────────────────────────────────────────────────────
 
@@ -2003,6 +2159,37 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
     # ── Watch Progress ────────────────────────────────────────────────────────
 
+    # ── Profiles ─────────────────────────────────────────────────────────────
+
+    @app.route("/api/profiles", methods=["GET"])
+    def api_get_profiles():
+        return jsonify({"profiles": get_profiles()})
+
+    @app.route("/api/profiles", methods=["POST"])
+    def api_create_profile():
+        data = request.get_json(force=True) or {}
+        name = (data.get("name") or "").strip()
+        avatar_color = (data.get("avatar_color") or "#E50914").strip()
+        if not name:
+            return jsonify({"error": "name required"}), 400
+        new_id = create_profile(name, avatar_color)
+        return jsonify({"id": new_id, "ok": True})
+
+    @app.route("/api/profiles/<int:profile_id>", methods=["PUT"])
+    def api_update_profile(profile_id):
+        data = request.get_json(force=True) or {}
+        name = (data.get("name") or "").strip() or None
+        avatar_color = (data.get("avatar_color") or "").strip() or None
+        update_profile(profile_id, name=name, avatar_color=avatar_color)
+        return jsonify({"ok": True})
+
+    @app.route("/api/profiles/<int:profile_id>", methods=["DELETE"])
+    def api_delete_profile(profile_id):
+        ok, err = delete_profile(profile_id)
+        if not ok:
+            return jsonify({"error": err}), 400
+        return jsonify({"ok": True})
+
     @app.route("/api/progress", methods=["POST"])
     def api_save_progress():
         data = request.get_json(force=True) or {}
@@ -2021,6 +2208,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                 prefix = "/api/stream/files/"
                 if prefix in path:
                     stream_file = unquote(path[path.index(prefix) + len(prefix):])
+            from flask import g as _g
             upsert_watch_progress(
                 episode_url=episode_url,
                 series_title=data.get("series_title"),
@@ -2032,6 +2220,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
                 duration_seconds=float(data.get("duration_seconds") or 0),
                 completed=bool(data.get("completed", False)),
                 stream_file=stream_file,
+                profile_id=getattr(_g, "profile_id", 1),
             )
             return jsonify({"ok": True})
         except Exception as e:
@@ -2044,7 +2233,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         from .thumbnails import preview_path as _prev_path
         limit = int(request.args.get("limit", 50))
         continue_only = request.args.get("continue", "0") == "1"
-        rows = get_continue_watching(limit=limit) if continue_only else get_all_watch_progress(limit=limit)
+        from flask import g as _g
+        _pid = getattr(_g, "profile_id", 1)
+        rows = get_continue_watching(limit=limit, profile_id=_pid) if continue_only else get_all_watch_progress(limit=limit, profile_id=_pid)
 
         # Build scan roots (mirrors episodes endpoint logic)
         _dl_str = os.environ.get("ANIWORLD_DOWNLOAD_PATH", "")
@@ -2114,7 +2305,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
     @app.route("/api/progress/<path:episode_url>", methods=["GET"])
     def api_get_episode_progress(episode_url):
-        row = get_watch_progress(episode_url)
+        from flask import g as _g
+        row = get_watch_progress(episode_url, profile_id=getattr(_g, "profile_id", 1))
         if not row:
             return jsonify({"progress": None})
         return jsonify({"progress": row})
@@ -2123,7 +2315,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
     @app.route("/api/watchlist", methods=["GET"])
     def api_get_watchlist():
-        items = get_watchlist()
+        from flask import g as _g
+        items = get_watchlist(profile_id=getattr(_g, "profile_id", 1))
         results = [
             {
                 "title": item["series_title"],
@@ -2136,30 +2329,49 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
     @app.route("/api/watchlist", methods=["POST"])
     def api_add_to_watchlist():
+        from flask import g as _g
         data = request.get_json(force=True) or {}
         series_url = (data.get("series_url") or "").strip()
         series_title = (data.get("series_title") or "").strip()
         poster_url = (data.get("poster_url") or "").strip()
         if not series_url:
             return jsonify({"error": "series_url required"}), 400
-        add_to_watchlist(series_url, series_title, poster_url)
+        add_to_watchlist(series_url, series_title, poster_url, profile_id=getattr(_g, "profile_id", 1))
         return jsonify({"ok": True})
 
     @app.route("/api/watchlist", methods=["DELETE"])
     def api_remove_from_watchlist():
+        from flask import g as _g
         data = request.get_json(force=True) or {}
         series_url = (data.get("series_url") or "").strip()
         if not series_url:
             return jsonify({"error": "series_url required"}), 400
-        remove_from_watchlist(series_url)
+        remove_from_watchlist(series_url, profile_id=getattr(_g, "profile_id", 1))
         return jsonify({"ok": True})
 
     @app.route("/api/watchlist/check", methods=["GET"])
     def api_check_watchlist():
+        from flask import g as _g
         series_url = request.args.get("url", "").strip()
         if not series_url:
             return jsonify({"in_list": False})
-        return jsonify({"in_list": is_in_watchlist(series_url)})
+        return jsonify({"in_list": is_in_watchlist(series_url, profile_id=getattr(_g, "profile_id", 1))})
+
+    @app.route("/api/watchlist/enriched", methods=["GET"])
+    def api_get_watchlist_enriched():
+        from flask import g as _g
+        items = get_watchlist_enriched(profile_id=getattr(_g, "profile_id", 1))
+        results = [
+            {
+                "title": item["series_title"],
+                "url": item["series_url"],
+                "poster_url": item["poster_url"],
+                "last_watched_at": item["last_watched_at"],
+                "new_content": item["new_content"],
+            }
+            for item in items
+        ]
+        return jsonify({"items": results})
 
     @app.route("/api/thumbnails", methods=["GET"])
     def api_thumbnails():
@@ -2262,6 +2474,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             "auth.setup",
             "auth.oidc_login",
             "auth.oidc_callback",
+            "api_auth_check",   # public: lets Flutter detect auth status
         }
         for endpoint, view_func in list(app.view_functions.items()):
             if endpoint not in _exempt:
@@ -2275,6 +2488,70 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         for endpoint in list(app.view_functions):
             if endpoint.startswith("api_") or endpoint.startswith("auth.admin_"):
                 csrf.exempt(app.view_functions[endpoint])
+
+        # ── Token-based auth routes (registered after the wrapping loop so they
+        #    are NOT wrapped by login_required — they handle auth themselves) ──────
+
+        import re as _re
+
+        @app.route("/api/auth/setup", methods=["POST"])
+        def api_auth_setup():
+            from .db import create_user as _create_user, has_any_admin as _has_any_admin
+
+            if _has_any_admin():
+                return jsonify({"error": "Setup already completed"}), 409
+            data = request.get_json(silent=True) or {}
+            username = (data.get("username") or "").strip()
+            password = data.get("password") or ""
+            if not username:
+                return jsonify({"error": "Username is required"}), 400
+            if len(username) > 64:
+                return jsonify({"error": "Username must be at most 64 characters"}), 400
+            if not _re.match(r"^[a-zA-Z0-9._-]+$", username):
+                return jsonify({"error": "Username may only contain letters, digits, dots, hyphens, and underscores"}), 400
+            if len(password) < 8:
+                return jsonify({"error": "Password must be at least 8 characters"}), 400
+            uid = _create_user(username, password, role="admin")
+            token = create_api_token(uid)
+            return jsonify({"token": token, "username": username, "role": "admin"})
+
+        @app.route("/api/auth/login", methods=["POST"])
+        def api_auth_login():
+            from .db import verify_user as _verify_user
+
+            data = request.get_json(silent=True) or {}
+            username = (data.get("username") or "").strip()
+            password = data.get("password") or ""
+            user, err = _verify_user(username, password)
+            if not user:
+                return jsonify({"error": err}), 401
+            token = create_api_token(user["id"])
+            return jsonify({"token": token, "username": user["username"], "role": user["role"]})
+
+        @app.route("/api/auth/logout", methods=["POST"])
+        def api_auth_logout():
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                delete_api_token(auth_header[7:].strip())
+            from flask import session as _sess
+            _sess.clear()
+            return jsonify({"ok": True})
+
+        @app.route("/api/auth/me")
+        def api_auth_me():
+            user = get_current_user()
+            if not user:
+                auth_header = request.headers.get("Authorization", "")
+                if auth_header.startswith("Bearer "):
+                    user = validate_api_token(auth_header[7:].strip())
+            if not user:
+                return jsonify({"error": "Not authenticated"}), 401
+            return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]})
+
+        csrf.exempt(api_auth_setup)
+        csrf.exempt(api_auth_login)
+        csrf.exempt(api_auth_logout)
+        csrf.exempt(api_auth_me)
 
     return app
 

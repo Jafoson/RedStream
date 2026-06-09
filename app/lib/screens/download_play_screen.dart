@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -47,11 +49,20 @@ class _DownloadPlayScreenState extends ConsumerState<DownloadPlayScreen> {
   bool _navigating = false;
   bool _hasEverFoundItem = false;
   String? _error;
+  // Safety-net: poll the library every 3 s so we react immediately when the
+  // file is available, regardless of which queue item produced it.
+  Timer? _libraryPoller;
 
   @override
   void initState() {
     super.initState();
     _checkThenMaybeEnqueue();
+  }
+
+  @override
+  void dispose() {
+    _libraryPoller?.cancel();
+    super.dispose();
   }
 
   // ── Stream URL resolution ──────────────────────────────────────────────────
@@ -109,7 +120,34 @@ class _DownloadPlayScreenState extends ConsumerState<DownloadPlayScreen> {
     }
 
     setState(() => _checking = false);
-    await _autoEnqueue();
+
+    // If the episode is already downloading, adopt that item instead of
+    // creating a duplicate (which would waste bandwidth and delay playback).
+    final existingId = await widget.api.findQueueItemByEpisode(widget.episodeUrl);
+    if (!mounted) return;
+
+    if (existingId != null) {
+      setState(() => _queueId = existingId);
+    } else {
+      await _autoEnqueue();
+    }
+
+    _startLibraryPoller();
+  }
+
+  void _startLibraryPoller() {
+    _libraryPoller?.cancel();
+    _libraryPoller = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (_navigating || !mounted) {
+        _libraryPoller?.cancel();
+        return;
+      }
+      final url = await _findStreamUrl();
+      if (url.isNotEmpty && mounted && !_navigating) {
+        _libraryPoller?.cancel();
+        _onDownloadDone();
+      }
+    });
   }
 
   Future<void> _autoEnqueue() async {
@@ -124,6 +162,7 @@ class _DownloadPlayScreenState extends ConsumerState<DownloadPlayScreen> {
         episodeUrls: [widget.episodeUrl],
         language: lang,
         provider: 'VOE',
+        priority: 0, // watch-intent: user is waiting to watch immediately
       );
       if (mounted) setState(() => _queueId = id);
     } catch (e) {
@@ -146,7 +185,8 @@ class _DownloadPlayScreenState extends ConsumerState<DownloadPlayScreen> {
 
   void _onDownloadDone() {
     if (_navigating || !mounted) return;
-    _navigating = true; // prevent re-entry while async
+    _navigating = true;
+    _libraryPoller?.cancel();
     _findStreamUrl().then((url) {
       if (!mounted) return;
       if (url.isNotEmpty) {

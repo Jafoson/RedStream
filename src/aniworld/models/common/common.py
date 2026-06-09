@@ -253,9 +253,10 @@ _ffmpeg_progress = {
     "active": False,
 }
 
-# Holds the currently running FFmpeg subprocess so it can be killed on cancel
-_active_ffmpeg_proc: Optional[subprocess.Popen] = None
-_active_ffmpeg_proc_lock = _threading.Lock()
+# Per-thread FFmpeg process registry (thread_id → Popen) so both download
+# slots can run simultaneously and be killed independently.
+_active_ffmpeg_procs: dict = {}
+_active_ffmpeg_procs_lock = _threading.Lock()
 
 
 def get_ffmpeg_progress():
@@ -264,10 +265,11 @@ def get_ffmpeg_progress():
         return dict(_ffmpeg_progress)
 
 
-def kill_active_ffmpeg():
-    """Kill the currently running FFmpeg process immediately, if any."""
-    with _active_ffmpeg_proc_lock:
-        proc = _active_ffmpeg_proc
+def kill_active_ffmpeg(thread_id: Optional[int] = None):
+    """Kill the FFmpeg process for *thread_id* (default: calling thread)."""
+    tid = thread_id if thread_id is not None else _threading.current_thread().ident
+    with _active_ffmpeg_procs_lock:
+        proc = _active_ffmpeg_procs.get(tid)
     if proc is not None and proc.poll() is None:
         try:
             proc.kill()
@@ -340,9 +342,9 @@ def _run_ffmpeg_with_progress(node, overwrite_output=True, label=""):
         universal_newlines=False,
     )
 
-    global _active_ffmpeg_proc
-    with _active_ffmpeg_proc_lock:
-        _active_ffmpeg_proc = process
+    _tid = _threading.current_thread().ident
+    with _active_ffmpeg_procs_lock:
+        _active_ffmpeg_procs[_tid] = process
 
     # --- reader thread: reads stderr byte-by-byte and pushes complete lines ---
     line_queue = queue.Queue()
@@ -494,9 +496,9 @@ def _run_ffmpeg_with_progress(node, overwrite_output=True, label=""):
             _ffmpeg_progress.update(
                 percent=0.0, time="", speed="", bandwidth="", active=False
             )
-        with _active_ffmpeg_proc_lock:
-            if _active_ffmpeg_proc is process:
-                _active_ffmpeg_proc = None
+        with _active_ffmpeg_procs_lock:
+            if _active_ffmpeg_procs.get(_tid) is process:
+                _active_ffmpeg_procs.pop(_tid, None)
 
     reader_thread.join(timeout=5)
     process.wait()

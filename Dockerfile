@@ -4,10 +4,11 @@ WORKDIR /app
 
 RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
-# Install ffmpeg, Xvfb and system dependencies required by Chromium (patchright)
+# System dependencies: ffmpeg, Xvfb (headless Chromium), curl (healthcheck), Chromium libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     xvfb \
+    curl \
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
@@ -28,48 +29,44 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create an unprivileged user and pre-create the app/runtime directories it needs
-# This avoids running the app as root and prevents permission issues at runtime
+# Unprivileged user + runtime directories
 RUN adduser --disabled-password --gecos "" aniworld \
     && mkdir -p /app/Downloads /home/aniworld/.aniworld \
     && chown -R aniworld:aniworld /app /home/aniworld
 
-# Container-friendly Python defaults:
-# - Disable .pyc bytecode writes (keeps layers/volumes cleaner)
-# - Unbuffer stdout/stderr so logs appear immediately
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Default download directory used by the application
-ENV ANIWORLD_DOWNLOAD_PATH=/app/Downloads
+# Default paths and virtual display
+ENV ANIWORLD_DOWNLOAD_PATH=/app/Downloads \
+    DISPLAY=:99 \
+    ANIWORLD_WEB_PORT=8080
 
-# Virtual display for headless Chromium (patchright) — headed mode works via Xvfb
-ENV DISPLAY=:99
-
-# Copy packaging metadata first to maximize Docker layer cache hits for dependency installs
+# Copy packaging metadata first to maximize layer cache
 COPY pyproject.toml /app/
 COPY README.md LICENSE MANIFEST.in /app/
 
-# Keep pip current
 RUN pip install --no-cache-dir --upgrade pip
 
-# Copy the application source code
 COPY src/ /app/src/
 
-# Install the project into the image
 RUN pip install --no-cache-dir .
 
-# Pre-install patchright Chromium into the image so it's available at runtime
+# Pre-install patchright Chromium so it's available at runtime without network access
 RUN python -m patchright install chromium
 
-# Ensure the runtime directories are still writable after COPY overwrote ownership
 RUN chown -R aniworld:aniworld /app/Downloads /home/aniworld/.aniworld
 
-# Drop privileges for runtime
 USER aniworld
 
-# Expose the web UI port
 EXPOSE 8080
 
-# Start Xvfb virtual display on :99, then launch the web UI
-CMD Xvfb :99 -screen 0 1280x720x24 -nolisten tcp & sleep 1 && exec aniworld --web-ui --web-expose --no-browser --web-port 8080
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -sf http://localhost:${ANIWORLD_WEB_PORT}/api/auth/check > /dev/null || exit 1
+
+# Start Xvfb for headless Chromium, then launch the web UI.
+# Auth and other settings are controlled entirely via environment variables —
+# see docker-compose.yaml for the full list.
+CMD Xvfb :99 -screen 0 1280x720x24 -nolisten tcp & \
+    sleep 1 && \
+    exec aniworld --web-ui --web-expose --no-browser --web-port ${ANIWORLD_WEB_PORT:-8080}

@@ -15,6 +15,7 @@ import 'library_screen.dart';
 import 'queue_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
+import 'profile_screen.dart';
 import 'watchlist_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,15 +36,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void initState() {
     super.initState();
     _nav = ref.read(appNavProvider);
-    // Capture all D-pad/OK key events globally — before Flutter's focus
-    // traversal can redirect them to a ListView or other scrollable.
     _nav.attach();
+    _nav.setProfileSwitchCallback(_openProfilePicker);
   }
 
   @override
   void dispose() {
     _nav.detach();
     super.dispose();
+  }
+
+  Future<void> _openProfilePicker() async {
+    _nav.detach();
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ProfileScreen(canPop: true)),
+    );
+    if (mounted) {
+      _nav.attach();
+      _nav.switchScreen(NavScreen.home);
+    }
   }
 
   void _openDetail(SeriesResult item) async {
@@ -61,6 +72,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Future<void> _openFromProgress(WatchProgress p) async {
     _nav.detach();
+    // Frontier is completed → the next episode to watch; open the series detail
+    // page so the correct "Nächste Folge" button is shown with the right URL.
+    if (p.completed) {
+      _openDetail(SeriesResult(
+        title: p.seriesTitle ?? '',
+        url: p.seriesUrl ?? p.episodeUrl,
+        posterUrl: p.posterUrl,
+      ));
+      return;
+    }
     final api = ref.read(apiServiceProvider);
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -306,6 +327,8 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
       _scrollToRow(widget.nav.contentRow);
     });
 
+    final profileName = ref.watch(activeProfileNameProvider).valueOrNull;
+
     final now = DateTime.now();
     final h = now.hour;
     final greet = h < 5
@@ -348,9 +371,9 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
                           ),
                           children: [
                             TextSpan(text: '$greet, '),
-                            const TextSpan(
-                              text: 'Willkommen',
-                              style: TextStyle(color: Rs.accent),
+                            TextSpan(
+                              text: profileName ?? 'Willkommen',
+                              style: const TextStyle(color: Rs.accent),
                             ),
                           ],
                         ),
@@ -407,7 +430,7 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
             KeyedSubtree(
               key: _rowKeys.putIfAbsent(watchlistNavRow, GlobalKey.new),
               child: RsRail(
-                title: 'Meine Liste',
+                title: 'Watchlist',
                 linkLabel: 'Alle',
                 rowIndex: watchlistNavRow,
                 items: watchlistItems,
@@ -569,8 +592,10 @@ class _ContinueRailState extends State<_ContinueRail> {
                     child: RsContinueCard(
                       item: item,
                       focused: isFocused,
-                      epLabel: 'S${p.season} E${p.episodeNumber}',
-                      progressFraction: fraction,
+                      epLabel: p.completed
+                          ? 'S${p.season} E${p.episodeNumber + 1}'
+                          : 'S${p.season} E${p.episodeNumber}',
+                      progressFraction: p.completed ? 0 : fraction,
                       thumbnailUrl: p.previewUrl.isNotEmpty ? p.previewUrl : null,
                       onTap: () => widget.onSelect(p),
                     ),
