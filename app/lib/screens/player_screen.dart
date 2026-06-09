@@ -223,7 +223,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         } catch (_) {}
       }
 
-      await _player.open(Media(streamUrl));
+      await _player.open(Media(streamUrl, httpHeaders: _authHeaders()));
       _progressTimer =
           Timer.periodic(const Duration(seconds: 10), (_) => _saveProgress());
 
@@ -277,6 +277,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
       }
     });
+  }
+
+  Map<String, String> _authHeaders() {
+    final token = widget.api.authToken;
+    if (token == null) return {};
+    return {'Authorization': 'Bearer $token'};
   }
 
   void _togglePlayPause() {
@@ -531,7 +537,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     // Swap media in the existing player — no new Player(), no navigation
     _streamFile = _extractStreamFile(streamUrl);
-    await _player.open(Media(streamUrl));
+    await _player.open(Media(streamUrl, httpHeaders: _authHeaders()));
     _progressTimer =
         Timer.periodic(const Duration(seconds: 10), (_) => _saveProgress());
 

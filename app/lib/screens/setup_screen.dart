@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/api_service.dart';
 import '../providers/providers.dart';
 import '../widgets/tv_focusable.dart';
 import 'home_screen.dart';
+import 'login_screen.dart';
+import 'profile_screen.dart';
 
 /// First-launch screen — user enters the backend server URL.
 class SetupScreen extends ConsumerStatefulWidget {
@@ -14,9 +17,18 @@ class SetupScreen extends ConsumerStatefulWidget {
 }
 
 class _SetupScreenState extends ConsumerState<SetupScreen> {
-  final _controller = TextEditingController(text: 'http://');
+  late final TextEditingController _controller;
   bool _saving = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = ref.read(serverUrlProvider);
+    _controller = TextEditingController(
+      text: existing.isNotEmpty ? existing : 'http://',
+    );
+  }
 
   @override
   void dispose() {
@@ -35,16 +47,30 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
       _error = null;
     });
     try {
+      final api = ApiService(url);
+      final authStatus = await api.checkAuth();
       await ref.read(serverUrlProvider.notifier).setUrl(url);
-      if (mounted) {
+      if (!mounted) return;
+      if (authStatus.setupNeeded) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
+          MaterialPageRoute(builder: (_) => const LoginScreen(isSetup: true)),
+        );
+      } else if (authStatus.authEnabled) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+        );
+      } else {
+        final profileId = ref.read(activeProfileIdProvider);
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => profileId != null ? const HomeScreen() : const ProfileScreen(),
+          ),
         );
       }
     } catch (e) {
       setState(() {
         _saving = false;
-        _error = e.toString();
+        _error = 'Cannot connect to server. Check the URL and try again.';
       });
     }
   }
@@ -64,9 +90,9 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('AniWorld', style: tt.displayMedium?.copyWith(color: cs.primary)),
+                Text('RedStream', style: tt.displayMedium?.copyWith(color: cs.primary)),
                 const SizedBox(height: 8),
-                Text('Enter your server URL to get started.', style: tt.bodyLarge),
+                Text('Enter your server URL to connect.', style: tt.bodyLarge),
                 const SizedBox(height: 40),
                 TextField(
                   controller: _controller,

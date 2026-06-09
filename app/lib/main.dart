@@ -75,8 +75,7 @@ Future<_AppInitScreen> _resolveInitScreen({
       return _AppInitScreen.login;
     }
   } catch (_) {
-    // Backend unreachable — proceed without auth
-    return activeProfileId != null ? _AppInitScreen.home : _AppInitScreen.profileSelect;
+    return _AppInitScreen.serverSetup;
   }
 }
 
