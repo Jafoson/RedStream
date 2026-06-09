@@ -1,13 +1,3 @@
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21")
-    }
-}
-
 allprojects {
     repositories {
         google()
@@ -24,6 +14,11 @@ rootProject.layout.buildDirectory.value(newBuildDir)
 subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
+    // screen_brightness_android 2.1.5 skips apply kotlin-android for AGP >= 9,
+    // but still uses kotlin {} DSL. Apply it to all Android library subprojects.
+    plugins.withId("com.android.library") {
+        apply(plugin = "org.jetbrains.kotlin.android")
+    }
 }
 subprojects {
     project.evaluationDependsOn(":app")
