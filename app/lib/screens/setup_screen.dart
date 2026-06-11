@@ -90,7 +90,13 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('RedStream', style: tt.displayMedium?.copyWith(color: cs.primary)),
+                Row(
+                  children: [
+                    Image.asset('assets/logo.png', width: 52, height: 52),
+                    const SizedBox(width: 14),
+                    Text('RedStream', style: tt.displayMedium?.copyWith(color: cs.primary)),
+                  ],
+                ),
                 const SizedBox(height: 8),
                 Text('Enter your server URL to connect.', style: tt.bodyLarge),
                 const SizedBox(height: 40),

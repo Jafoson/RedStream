@@ -1123,19 +1123,26 @@ class _PlayerUIState extends State<_PlayerUI> {
                   // RedStream logo — same chip style
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 11),
+                        horizontal: 16, vertical: 9),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.55),
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: Colors.white24, width: 1.5),
                     ),
-                    child: const Text(
-                      'RedStream',
-                      style: TextStyle(
-                          color: Rs.accent,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Image.asset('assets/logo.png', width: 22, height: 22),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'RedStream',
+                          style: TextStyle(
+                              color: Rs.accent,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5),
+                        ),
+                      ],
                     ),
                   ),
                 ],

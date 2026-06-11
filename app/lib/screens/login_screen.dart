@@ -102,16 +102,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               // Logo
               Row(
                 children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: Rs.accent,
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: [BoxShadow(color: Rs.accent.withValues(alpha: 0.5), blurRadius: 24, offset: const Offset(0, 6))],
-                    ),
-                    child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 26),
-                  ),
+                  Image.asset('assets/logo.png', width: 44, height: 44),
                   const SizedBox(width: 14),
                   RichText(
                     text: const TextSpan(children: [
