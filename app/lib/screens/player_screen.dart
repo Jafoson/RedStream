@@ -413,15 +413,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (existingId != null) return;
     } catch (_) {}
 
-    // Enqueue as prefetch (P2) — fire-and-forget, errors are silently ignored
+    // Fetch server defaults for language/provider
+    String language = 'German Dub';
+    String provider = 'VOE';
+    try {
+      final settings = await widget.api.getSettings();
+      language = settings['default_language'] as String? ?? language;
+      provider = settings['default_provider'] as String? ?? provider;
+    } catch (_) {}
+
+    // Enqueue as prefetch (priority 1) — fire-and-forget, errors are silently ignored
     try {
       await widget.api.enqueueDownload(
         title: widget.seriesTitle,
         seriesUrl: seriesUrl,
         episodeUrls: [nextEpUrl],
-        language: 'German Dub',
-        provider: 'VOE',
-        priority: 2,
+        language: language,
+        provider: provider,
+        priority: 1,
       );
     } catch (_) {}
   }

@@ -1515,6 +1515,10 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         )
         if sync_provider not in WORKING_PROVIDERS and provider_fallback_order:
             sync_provider = provider_fallback_order[0]
+        default_language = os.environ.get("ANIWORLD_LANGUAGE", "German Dub")
+        default_provider = os.environ.get("ANIWORLD_PROVIDER", provider_fallback_order[0] if provider_fallback_order else "VOE")
+        if default_provider not in WORKING_PROVIDERS and provider_fallback_order:
+            default_provider = provider_fallback_order[0]
         return jsonify(
             {
                 "download_path": resolved,
@@ -1525,6 +1529,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
                 "sync_provider": sync_provider,
                 "provider_fallback_order": provider_fallback_order,
                 "available_providers": list(WORKING_PROVIDERS),
+                "default_language": default_language,
+                "default_provider": default_provider,
             }
         )
 
