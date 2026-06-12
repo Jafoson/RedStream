@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_service.dart';
 import '../providers/providers.dart';
+import '../utils/tv_keyboard.dart';
 import '../widgets/tv_focusable.dart';
 import 'home_screen.dart';
 import 'login_screen.dart';
@@ -28,6 +29,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
     _controller = TextEditingController(
       text: existing.isNotEmpty ? existing : 'http://',
     );
+    showKeyboardOnNextFrame();
   }
 
   @override

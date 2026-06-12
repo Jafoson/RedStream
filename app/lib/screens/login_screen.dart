@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/api_service.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
+import '../utils/tv_keyboard.dart';
 import 'home_screen.dart';
 import 'profile_screen.dart';
 
@@ -31,8 +32,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    // Pre-fill with saved server URL
     _hostCtrl.text = ref.read(serverUrlProvider);
+    _hostFocus.showKeyboardOnFocus();
+    _userFocus.showKeyboardOnFocus();
+    _passFocus.showKeyboardOnFocus();
   }
 
   @override

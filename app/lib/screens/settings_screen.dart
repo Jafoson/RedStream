@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../navigation/app_nav.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
+import '../utils/tv_keyboard.dart';
 import 'setup_screen.dart';
 
 // Nav rows: 0 = URL field, 1 = Save button, 2 = Reconfigure button
@@ -25,6 +26,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     super.initState();
     _urlController = TextEditingController(text: ref.read(serverUrlProvider));
     _urlFocus.addListener(_onUrlFocusChange);
+    _urlFocus.showKeyboardOnFocus();
   }
 
   @override

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
+import '../utils/tv_keyboard.dart';
 import '../widgets/tv_focusable.dart';
 import 'home_screen.dart';
 
@@ -488,6 +489,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
   void initState() {
     super.initState();
     _selectedColor = widget.initialColor;
+    showKeyboardOnNextFrame();
   }
 
   void _selectColor(String hex) {

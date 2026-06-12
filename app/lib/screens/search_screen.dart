@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../navigation/app_nav.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
+import '../utils/tv_keyboard.dart';
 import '../widgets/rs_poster.dart';
 
 // Nav rows: 0 = search bar, 1 = category tabs, 2+ = result grid rows.
@@ -35,6 +36,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void initState() {
     super.initState();
     _searchFocus.addListener(_onSearchFocusChange);
+    _searchFocus.showKeyboardOnFocus();
     widget.nav.addListener(_onNavChanged);
   }
 
