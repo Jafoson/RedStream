@@ -1,3 +1,4 @@
+import 'dart:ffi' show Abi;
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
@@ -16,7 +17,8 @@ class ReleaseInfo {
   final String body;
   final String? windowsDownloadUrl;
   final String? macosDownloadUrl;
-  final String? androidDownloadUrl;
+  final String? androidArm64DownloadUrl;
+  final String? androidArm32DownloadUrl;
 
   const ReleaseInfo({
     required this.tagName,
@@ -25,7 +27,8 @@ class ReleaseInfo {
     required this.body,
     this.windowsDownloadUrl,
     this.macosDownloadUrl,
-    this.androidDownloadUrl,
+    this.androidArm64DownloadUrl,
+    this.androidArm32DownloadUrl,
   });
 }
 
@@ -58,13 +61,19 @@ class UpdateService {
     final version = tagName.replaceFirst(RegExp(r'^v'), '');
     final assets = (data['assets'] as List?) ?? [];
 
-    String? windowsUrl, macosUrl, androidUrl;
+    String? windowsUrl, macosUrl, androidArm64Url, androidArm32Url;
     for (final a in assets) {
       final name = ((a['name'] as String?) ?? '').toLowerCase();
       final url = (a['browser_download_url'] as String?) ?? '';
       if (name.contains('windows') && name.endsWith('.zip')) windowsUrl = url;
       if (name.contains('macos') && name.endsWith('.zip')) macosUrl = url;
-      if (name.contains('android') && name.endsWith('.apk')) androidUrl = url;
+      if (name.contains('android') && name.endsWith('.apk')) {
+        if (name.contains('arm32')) {
+          androidArm32Url = url;
+        } else {
+          androidArm64Url = url;
+        }
+      }
     }
 
     return ReleaseInfo(
@@ -74,7 +83,8 @@ class UpdateService {
       body: (data['body'] as String?) ?? '',
       windowsDownloadUrl: windowsUrl,
       macosDownloadUrl: macosUrl,
-      androidDownloadUrl: androidUrl,
+      androidArm64DownloadUrl: androidArm64Url,
+      androidArm32DownloadUrl: androidArm32Url,
     );
   }
 
@@ -110,7 +120,10 @@ class UpdateService {
       downloadUrl = release.macosDownloadUrl;
       fileName = 'rs_update_${release.version}.zip';
     } else if (Platform.isAndroid) {
-      downloadUrl = release.androidDownloadUrl;
+      final isArm32 = Abi.current() == Abi.androidArm;
+      downloadUrl = isArm32
+          ? (release.androidArm32DownloadUrl ?? release.androidArm64DownloadUrl)
+          : (release.androidArm64DownloadUrl ?? release.androidArm32DownloadUrl);
       fileName = 'rs_update_${release.version}.apk';
     } else {
       throw Exception('Auto-Update wird auf dieser Plattform nicht unterstützt.');

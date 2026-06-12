@@ -1,5 +1,5 @@
-name: aniworld
-description: AniWorld Downloader — Android TV Client
+name: redstream
+description: RedStream — Android TV & Desktop Client
 publish_to: 'none'
 
 version: 1.0.0+1

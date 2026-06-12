@@ -1,4 +1,4 @@
-package com.example.app
+package io.redstream.app
 
 import io.flutter.embedding.android.FlutterActivity
 
