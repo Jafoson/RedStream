@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/api_service.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
+import '../widgets/rs_logo.dart';
 import '../widgets/tv_focusable.dart';
 import '../widgets/tv_keyboard_dialog.dart';
 import 'home_screen.dart';
@@ -114,8 +115,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('RedStream',
-                    style: tt.displayMedium?.copyWith(color: cs.primary)),
+                const RsLogo(iconSize: 36, textSize: 28),
                 const SizedBox(height: 8),
                 Text('Serveradresse eingeben.', style: tt.bodyLarge),
                 const SizedBox(height: 40),
@@ -171,6 +171,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                     value: _host,
                     focusNode: _urlFocus,
                     onChanged: (v) => setState(() => _host = v),
+                    onSubmitted: (_) => _save(),
                   ),
                 ),
 

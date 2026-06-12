@@ -651,9 +651,8 @@ class _HeroSection extends StatelessWidget {
                 ],
                 const SizedBox(height: 16),
                 // Action buttons
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 8,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     TvFocusable(
                       focusNode: playFocusNode,
@@ -692,8 +691,8 @@ class _HeroSection extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    if (resumeProgress != null)
+                    if (resumeProgress != null) ...[
+                      const SizedBox(width: 10),
                       TvFocusable(
                         onActivate: onPlay,
                         borderRadius: BorderRadius.circular(12),
@@ -706,6 +705,7 @@ class _HeroSection extends StatelessWidget {
                             border: Border.all(color: Rs.line2),
                           ),
                           child: const Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(Icons.skip_previous_rounded, color: Colors.white, size: 18),
                               SizedBox(width: 7),
@@ -718,6 +718,8 @@ class _HeroSection extends StatelessWidget {
                           ),
                         ),
                       ),
+                    ],
+                    const SizedBox(width: 10),
                     TvFocusable(
                       onActivate: onToggleWatchlist,
                       borderRadius: BorderRadius.circular(12),

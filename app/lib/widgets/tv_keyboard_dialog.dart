@@ -1,7 +1,13 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/rs_theme.dart';
+
+bool get _isDesktop =>
+    defaultTargetPlatform == TargetPlatform.windows ||
+    defaultTargetPlatform == TargetPlatform.macOS ||
+    defaultTargetPlatform == TargetPlatform.linux;
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -513,6 +519,7 @@ class TvTextInput extends StatefulWidget {
   final String value;
   final bool obscureText;
   final void Function(String) onChanged;
+  final void Function(String)? onSubmitted;
   final FocusNode? focusNode;
   final TextInputType? keyboardType;
 
@@ -521,6 +528,7 @@ class TvTextInput extends StatefulWidget {
     required this.label,
     required this.value,
     required this.onChanged,
+    this.onSubmitted,
     this.obscureText = false,
     this.focusNode,
     this.keyboardType,
@@ -533,12 +541,26 @@ class TvTextInput extends StatefulWidget {
 class _TvTextInputState extends State<TvTextInput> {
   late final FocusNode _focus;
   bool _focused = false;
+  TextEditingController? _desktopCtrl;
 
   @override
   void initState() {
     super.initState();
     _focus = widget.focusNode ?? FocusNode();
     _focus.addListener(_onFocus);
+    if (_isDesktop) {
+      _desktopCtrl = TextEditingController(text: widget.value);
+    }
+  }
+
+  @override
+  void didUpdateWidget(TvTextInput old) {
+    super.didUpdateWidget(old);
+    // Keep desktop controller text in sync when the parent updates value externally
+    final ctrl = _desktopCtrl;
+    if (ctrl != null && ctrl.text != widget.value) {
+      ctrl.value = ctrl.value.copyWith(text: widget.value);
+    }
   }
 
   void _onFocus() {
@@ -549,6 +571,7 @@ class _TvTextInputState extends State<TvTextInput> {
   void dispose() {
     _focus.removeListener(_onFocus);
     if (widget.focusNode == null) _focus.dispose();
+    _desktopCtrl?.dispose();
     super.dispose();
   }
 
@@ -568,6 +591,8 @@ class _TvTextInputState extends State<TvTextInput> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isDesktop) return _buildDesktopField();
+
     final display =
         widget.obscureText ? '•' * widget.value.length : widget.value;
 
@@ -617,6 +642,37 @@ class _TvTextInputState extends State<TvTextInput> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopField() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: Rs.panel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _focused ? Rs.accent : Rs.line,
+          width: _focused ? 2 : 1,
+        ),
+      ),
+      child: TextField(
+        controller: _desktopCtrl,
+        focusNode: _focus,
+        obscureText: widget.obscureText,
+        keyboardType: widget.keyboardType,
+        textInputAction: widget.onSubmitted != null
+            ? TextInputAction.done
+            : TextInputAction.next,
+        style: const TextStyle(color: Rs.text, fontSize: 17),
+        decoration: InputDecoration.collapsed(
+          hintText: widget.label,
+          hintStyle: const TextStyle(color: Rs.muted2, fontSize: 17),
+        ),
+        onChanged: widget.onChanged,
+        onSubmitted: widget.onSubmitted,
       ),
     );
   }

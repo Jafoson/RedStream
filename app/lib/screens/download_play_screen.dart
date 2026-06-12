@@ -25,6 +25,7 @@ class DownloadPlayScreen extends ConsumerStatefulWidget {
   final String episodeTitle;
   final List<String> availableLanguages;
   final int? customPathId;
+  final bool skipResume;
 
   const DownloadPlayScreen({
     super.key,
@@ -37,6 +38,7 @@ class DownloadPlayScreen extends ConsumerStatefulWidget {
     required this.episodeTitle,
     required this.availableLanguages,
     this.customPathId,
+    this.skipResume = false,
   });
 
   @override
@@ -228,6 +230,7 @@ class _DownloadPlayScreenState extends ConsumerState<DownloadPlayScreen> {
             streamUrl: streamUrl,
             episodeUrl: widget.episodeUrl,
             seriesUrl: widget.seriesUrl,
+            startFromBeginning: widget.skipResume,
           ),
         ))
         .then((_) {

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/api_service.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
+import '../widgets/rs_logo.dart';
 import '../widgets/tv_keyboard_dialog.dart';
 import 'home_screen.dart';
 import 'profile_screen.dart';
@@ -99,28 +100,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       backgroundColor: Rs.bg,
       body: Stack(
         children: [
-          // RedStream label — top right
-          Positioned(
-            top: 28,
-            right: 32,
-            child: RichText(
-              text: const TextSpan(children: [
-                TextSpan(
-                    text: 'Red',
-                    style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: Rs.text,
-                        letterSpacing: -0.3)),
-                TextSpan(
-                    text: 'Stream',
-                    style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: Rs.accent,
-                        letterSpacing: -0.3)),
-              ]),
-            ),
+          const Positioned(
+            top: 24,
+            right: 28,
+            child: RsLogo(iconSize: 28, textSize: 20),
           ),
           Center(
             child: SingleChildScrollView(
@@ -168,6 +151,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   value: _host,
                   focusNode: _hostFocus,
                   onChanged: (v) => setState(() => _host = v),
+                  onSubmitted: (_) => _userFocus.requestFocus(),
                 ),
               ),
               const SizedBox(height: 20),
@@ -194,6 +178,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   value: _username,
                   focusNode: _userFocus,
                   onChanged: (v) => setState(() => _username = v),
+                  onSubmitted: (_) => _passFocus.requestFocus(),
                 ),
               ),
               const SizedBox(height: 20),
@@ -221,6 +206,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   obscureText: true,
                   focusNode: _passFocus,
                   onChanged: (v) => setState(() => _password = v),
+                  onSubmitted: (_) => _submit(),
                 ),
               ),
 

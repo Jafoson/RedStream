@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,9 +10,14 @@ import '../widgets/rs_poster.dart';
 import '../widgets/tv_keyboard_dialog.dart';
 import '../widgets/tv_poster_grid.dart';
 
-// Nav rows (when keyboard is closed):
+// Nav rows (when TV keyboard is closed):
 //   0 = search bar, 1 = category tabs, 2+ = result grid rows.
 const _kbBase = 2;
+
+bool get _isDesktop =>
+    defaultTargetPlatform == TargetPlatform.windows ||
+    defaultTargetPlatform == TargetPlatform.macOS ||
+    defaultTargetPlatform == TargetPlatform.linux;
 
 class SearchScreen extends ConsumerStatefulWidget {
   final AppNavController nav;
@@ -30,11 +36,16 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   String _cat = 'Alle';
   String _query = '';
 
+  // TV keyboard (Android TV only)
   bool _keyboardOpen = false;
   final _keyboardKey = GlobalKey<TvKeyboardInlineState>();
 
-  // Track sidebar focus transitions to auto-open keyboard when the user
-  // navigates RIGHT from the sidebar into the search content area.
+  // Desktop text field
+  final _desktopCtrl = TextEditingController();
+  final _desktopFocusNode = FocusNode();
+
+  // Track sidebar focus transitions to auto-open keyboard / focus field when
+  // the user navigates RIGHT from the sidebar into the search content area.
   bool _prevSidebarFocused = true;
 
   final _resultsScrollCtrl = ScrollController();
@@ -45,6 +56,16 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     super.initState();
     _prevSidebarFocused = widget.nav.sidebarFocused;
     widget.nav.addListener(_onNavChanged);
+
+    if (_isDesktop) {
+      _desktopFocusNode.addListener(_onDesktopFocusChanged);
+      // Auto-focus the text field when navigating to the search screen.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !widget.nav.sidebarFocused) {
+          _desktopFocusNode.requestFocus();
+        }
+      });
+    }
   }
 
   @override
@@ -52,13 +73,34 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     widget.nav.textInputActive = false;
     widget.nav.textInputFull = false;
     widget.nav.removeListener(_onNavChanged);
+    _desktopFocusNode.removeListener(_onDesktopFocusChanged);
+    _desktopFocusNode.dispose();
+    _desktopCtrl.dispose();
     _resultsScrollCtrl.dispose();
     super.dispose();
   }
 
-  // ── Keyboard mode ────────────────────────────────────────────────────────
+  // ── Desktop focus ─────────────────────────────────────────────────────────
+
+  void _onDesktopFocusChanged() {
+    if (_desktopFocusNode.hasFocus) {
+      // textInputFull = false so UP/DOWN still exit text mode and navigate
+      // results via D-pad (useful when a keyboard has arrow keys).
+      widget.nav.textInputActive = true;
+      widget.nav.textInputFull = false;
+    } else {
+      widget.nav.textInputActive = false;
+      widget.nav.textInputFull = false;
+    }
+  }
+
+  // ── TV keyboard mode ─────────────────────────────────────────────────────
 
   void _enterKeyboardMode() {
+    if (_isDesktop) {
+      _desktopFocusNode.requestFocus();
+      return;
+    }
     setState(() => _keyboardOpen = true);
     widget.nav.textInputActive = true;
     widget.nav.textInputFull = true;
@@ -68,6 +110,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   void _exitKeyboardMode() {
+    if (_isDesktop) {
+      _desktopFocusNode.unfocus();
+      return;
+    }
     setState(() => _keyboardOpen = false);
     widget.nav.textInputActive = false;
     widget.nav.textInputFull = false;
@@ -80,8 +126,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   void _clearSearch() {
     setState(() => _query = '');
+    _desktopCtrl.clear();
     ref.read(searchProvider.notifier).clear();
-    _enterKeyboardMode();
+    if (_isDesktop) {
+      _desktopFocusNode.requestFocus();
+    } else {
+      _enterKeyboardMode();
+    }
   }
 
   void _selectCat(String cat) {
@@ -94,17 +145,21 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void _onNavChanged() {
     if (!mounted) return;
 
-    // Auto-open keyboard when user navigates RIGHT from sidebar to search content.
     final sidebarFocused = widget.nav.sidebarFocused;
     final sidebarJustLeft = _prevSidebarFocused && !sidebarFocused;
     _prevSidebarFocused = sidebarFocused;
-    if (sidebarJustLeft && widget.nav.screen == NavScreen.search && !_keyboardOpen) {
-      _enterKeyboardMode();
+
+    if (sidebarJustLeft && widget.nav.screen == NavScreen.search) {
+      if (_isDesktop) {
+        _desktopFocusNode.requestFocus();
+      } else if (!_keyboardOpen) {
+        _enterKeyboardMode();
+      }
       return;
     }
 
-    // Scroll results when navigating (keyboard closed only)
-    if (_keyboardOpen) return;
+    // Scroll results when navigating (TV keyboard closed only)
+    if (!_isDesktop && _keyboardOpen) return;
     final row = widget.nav.contentRow;
     if (row < _kbBase) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -144,7 +199,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       resRows.add(results.sublist(i, (i + _cols).clamp(0, results.length)));
     }
 
-    // Register nav for when keyboard is closed
+    // Register nav for when TV keyboard is closed (always on desktop)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       widget.nav.registerNav(
@@ -170,70 +225,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         // ── Search bar ────────────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(44, 22, 44, 0),
-          child: ListenableBuilder(
-            listenable: widget.nav,
-            builder: (_, _) {
-              final navFocused =
-                  !_keyboardOpen && widget.nav.isItemFocused(0, 0);
-              final highlighted = _keyboardOpen || navFocused;
-              return GestureDetector(
-                onTap: _enterKeyboardMode,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Rs.panel2,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: highlighted ? Rs.accent : Rs.line,
-                      width: highlighted ? 2 : 1,
-                    ),
-                    boxShadow: highlighted
-                        ? [
-                            BoxShadow(
-                              color: Rs.accent.withValues(alpha: 0.22),
-                              blurRadius: 14,
-                            )
-                          ]
-                        : null,
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.search_rounded,
-                          color: highlighted ? Rs.accent : Rs.muted, size: 20),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _query.isEmpty ? 'Titel suchen …' : _query,
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w600,
-                            color: _query.isEmpty ? Rs.muted2 : Rs.text,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (_query.isNotEmpty)
-                        GestureDetector(
-                          onTap: _clearSearch,
-                          child: const Padding(
-                            padding: EdgeInsets.only(left: 8),
-                            child: Icon(Icons.close_rounded,
-                                color: Rs.muted, size: 18),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
+          child: _isDesktop
+              ? _buildDesktopSearchBar(search.loading)
+              : _buildTvSearchBar(),
         ),
 
-        // ── Inline keyboard ────────────────────────────────────────────────────
-        if (_keyboardOpen) ...[
+        // ── TV keyboard (Android TV only) ─────────────────────────────────────
+        if (!_isDesktop && _keyboardOpen) ...[
           const SizedBox(height: 8),
           TvKeyboardInline(
             key: _keyboardKey,
@@ -241,8 +239,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             onChanged: _onQueryChanged,
             onExitKeyboard: _exitKeyboardMode,
           ),
-        ] else ...[
-          // ── Category tabs (only when keyboard is closed) ────────────────────
+        ],
+
+        // ── Category tabs ─────────────────────────────────────────────────────
+        // Always shown on desktop; on TV only when keyboard is closed.
+        if (_isDesktop || !_keyboardOpen) ...[
           const SizedBox(height: 10),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 44),
@@ -362,9 +363,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         Icon(Icons.keyboard_rounded,
                             color: Rs.muted2.withValues(alpha: 0.5), size: 44),
                         const SizedBox(height: 12),
-                        const Text('Tippe mit der Tastatur einen Titel ein',
-                            style:
-                                TextStyle(fontSize: 13, color: Rs.muted2)),
+                        Text(
+                          _isDesktop
+                              ? 'Titel über die Tastatur eingeben'
+                              : 'Tippe mit der Tastatur einen Titel ein',
+                          style: const TextStyle(
+                              fontSize: 13, color: Rs.muted2),
+                        ),
                       ],
                     ),
                   ),
@@ -391,9 +396,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                 listenable: widget.nav,
                                 builder: (_, _) => RsPosterCard(
                                   item: resRows[ri][ci],
-                                  focused: !_keyboardOpen &&
-                                      widget.nav
-                                          .isItemFocused(navRow, ci),
+                                  focused: (!_isDesktop && !_keyboardOpen &&
+                                          widget.nav.isItemFocused(navRow, ci)) ||
+                                      (_isDesktop &&
+                                          widget.nav
+                                              .isItemFocused(navRow, ci)),
                                   inGrid: true,
                                   onTap: () =>
                                       widget.onSelect(resRows[ri][ci]),
@@ -415,6 +422,146 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  // ── Search bar variants ───────────────────────────────────────────────────
+
+  Widget _buildDesktopSearchBar(bool loading) {
+    return AnimatedBuilder(
+      animation: _desktopFocusNode,
+      builder: (_, _) {
+        final focused = _desktopFocusNode.hasFocus;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+          decoration: BoxDecoration(
+            color: Rs.panel2,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: focused ? Rs.accent : Rs.line,
+              width: focused ? 2 : 1,
+            ),
+            boxShadow: focused
+                ? [
+                    BoxShadow(
+                      color: Rs.accent.withValues(alpha: 0.22),
+                      blurRadius: 14,
+                    )
+                  ]
+                : null,
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.search_rounded,
+                  color: focused ? Rs.accent : Rs.muted, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: _desktopCtrl,
+                  focusNode: _desktopFocusNode,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: Rs.text,
+                  ),
+                  decoration: const InputDecoration.collapsed(
+                    hintText: 'Titel suchen …',
+                    hintStyle: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: Rs.muted2,
+                    ),
+                  ),
+                  onChanged: _onQueryChanged,
+                ),
+              ),
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.only(left: 8),
+                  child: SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        color: Rs.accent, strokeWidth: 2),
+                  ),
+                )
+              else if (_query.isNotEmpty)
+                GestureDetector(
+                  onTap: _clearSearch,
+                  child: const Padding(
+                    padding: EdgeInsets.only(left: 8),
+                    child: Icon(Icons.close_rounded,
+                        color: Rs.muted, size: 18),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTvSearchBar() {
+    return ListenableBuilder(
+      listenable: widget.nav,
+      builder: (_, _) {
+        final navFocused =
+            !_keyboardOpen && widget.nav.isItemFocused(0, 0);
+        final highlighted = _keyboardOpen || navFocused;
+        return GestureDetector(
+          onTap: _enterKeyboardMode,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            decoration: BoxDecoration(
+              color: Rs.panel2,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: highlighted ? Rs.accent : Rs.line,
+                width: highlighted ? 2 : 1,
+              ),
+              boxShadow: highlighted
+                  ? [
+                      BoxShadow(
+                        color: Rs.accent.withValues(alpha: 0.22),
+                        blurRadius: 14,
+                      )
+                    ]
+                  : null,
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.search_rounded,
+                    color: highlighted ? Rs.accent : Rs.muted, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _query.isEmpty ? 'Titel suchen …' : _query,
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: _query.isEmpty ? Rs.muted2 : Rs.text,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (_query.isNotEmpty)
+                  GestureDetector(
+                    onTap: _clearSearch,
+                    child: const Padding(
+                      padding: EdgeInsets.only(left: 8),
+                      child: Icon(Icons.close_rounded,
+                          color: Rs.muted, size: 18),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

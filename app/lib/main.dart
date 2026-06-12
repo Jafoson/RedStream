@@ -1,8 +1,12 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'api/api_service.dart';
 import 'providers/providers.dart';
@@ -17,6 +21,9 @@ enum _AppInitScreen { serverSetup, adminSetup, login, profileSelect, home }
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+  if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+    await windowManager.ensureInitialized();
+  }
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
@@ -65,7 +72,6 @@ Future<_AppInitScreen> _resolveInitScreen({
     if (storedToken == null || storedToken.isEmpty) {
       return _AppInitScreen.login;
     }
-    // Validate stored token
     try {
       final authApi = ApiService(serverUrl, authToken: storedToken);
       await authApi.me();
@@ -79,18 +85,34 @@ Future<_AppInitScreen> _resolveInitScreen({
   }
 }
 
-class _AniWorldApp extends StatelessWidget {
+class _AniWorldApp extends ConsumerStatefulWidget {
   final _AppInitScreen initScreen;
   const _AniWorldApp({required this.initScreen});
 
   @override
+  ConsumerState<_AniWorldApp> createState() => _AniWorldAppState();
+}
+
+class _AniWorldAppState extends ConsumerState<_AniWorldApp> {
+  @override
+  void initState() {
+    super.initState();
+    // Auto-check for updates 5 s after startup (desktop + Android)
+    if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux || Platform.isAndroid)) {
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted) ref.read(updateProvider.notifier).check();
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final Widget home = switch (initScreen) {
-      _AppInitScreen.serverSetup  => const SetupScreen(),
-      _AppInitScreen.adminSetup   => const LoginScreen(isSetup: true),
-      _AppInitScreen.login        => const LoginScreen(),
+    final Widget home = switch (widget.initScreen) {
+      _AppInitScreen.serverSetup   => const SetupScreen(),
+      _AppInitScreen.adminSetup    => const LoginScreen(isSetup: true),
+      _AppInitScreen.login         => const LoginScreen(),
       _AppInitScreen.profileSelect => const ProfileScreen(),
-      _AppInitScreen.home         => const HomeScreen(),
+      _AppInitScreen.home          => const HomeScreen(),
     };
     return MaterialApp(
       title: 'RedStream',

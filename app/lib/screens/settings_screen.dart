@@ -1,5 +1,9 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../navigation/app_nav.dart';
 import '../providers/providers.dart';
@@ -7,7 +11,13 @@ import '../theme/rs_theme.dart';
 import '../widgets/tv_keyboard_dialog.dart';
 import 'setup_screen.dart';
 
-// Nav rows: 0 = URL field, 1 = Save button, 2 = Reconfigure button
+bool get _supportsUpdate =>
+    !kIsWeb &&
+    (Platform.isWindows ||
+        Platform.isMacOS ||
+        Platform.isLinux ||
+        Platform.isAndroid);
+
 class SettingsScreen extends ConsumerStatefulWidget {
   final AppNavController nav;
   const SettingsScreen({super.key, required this.nav});
@@ -20,11 +30,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late String _url;
   final _urlFocus = FocusNode(skipTraversal: true);
   bool _saved = false;
+  String _appVersion = '';
 
   @override
   void initState() {
     super.initState();
     _url = ref.read(serverUrlProvider);
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    if (mounted) setState(() => _appVersion = info.version);
   }
 
   @override
@@ -45,11 +62,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
     final currentUrl = ref.watch(serverUrlProvider);
+    final updateState = ref.watch(updateProvider);
 
-    // Nav: row 0 = URL field, row 1 = Save, row 2 = Reconfigure
+    // Nav: row 0 = URL field, row 1 = Save, row 2 = Reconfigure, row 3 = Update btn
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      widget.nav.registerNav([1, 1, 1], (row, col) {
+      widget.nav.registerNav([1, 1, 1, 1], (row, col) {
         switch (row) {
           case 0:
             _urlFocus.requestFocus();
@@ -59,6 +77,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(builder: (_) => const SetupScreen()),
             );
+          case 3:
+            _handleUpdateAction(updateState);
         }
       });
     });
@@ -82,7 +102,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   if (currentUrl.isNotEmpty)
                     Text(currentUrl, style: tt.bodyMedium),
                   const SizedBox(height: 14),
-                  // URL field (nav row 0)
                   TvTextInput(
                     label: 'http://192.168.1.100:8080',
                     value: _url,
@@ -90,7 +109,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onChanged: (v) => setState(() => _url = v),
                   ),
                   const SizedBox(height: 12),
-                  // Save button (nav row 1)
                   ListenableBuilder(
                     listenable: widget.nav,
                     builder: (_, _) {
@@ -123,7 +141,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                 : null,
                           ),
                           child: Text(
-                            _saved ? '✓ Saved' : 'Save',
+                            _saved ? '✓ Gespeichert' : 'Speichern',
                             style: TextStyle(
                               color: (isFoc || _saved) ? Rs.bg : Rs.text,
                               fontWeight: FontWeight.bold,
@@ -142,37 +160,79 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
         const SizedBox(height: 32),
 
-        // ── About ───────────────────────────────────────────────────────
-        _Section(
-          title: 'About',
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+        // ── Updates (desktop only) ──────────────────────────────────────
+        if (_supportsUpdate) ...[
+          _Section(
+            title: 'Updates',
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        Text('AniWorld TV', style: tt.bodyLarge),
-                        Text('Android TV client for AniWorld-Downloader',
-                            style: tt.bodyMedium),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('RedStream',
+                                  style: tt.bodyLarge?.copyWith(
+                                      fontWeight: FontWeight.w700)),
+                              Text(
+                                _appVersion.isEmpty
+                                    ? 'Version wird geladen…'
+                                    : 'v$_appVersion',
+                                style: tt.bodyMedium
+                                    ?.copyWith(color: Colors.white54),
+                              ),
+                            ],
+                          ),
+                        ),
+                        _UpdateStatusChip(state: updateState),
                       ],
                     ),
-                  ),
-                  const Text('v1.0.0',
-                      style: TextStyle(color: Colors.white38)),
-                ],
+                    if (updateState is UpdateAvailable) ...[
+                      const SizedBox(height: 12),
+                      _ReleaseNotes(body: updateState.release.body),
+                    ],
+                    if (updateState is UpdateDownloading) ...[
+                      const SizedBox(height: 16),
+                      _DownloadProgress(progress: updateState.progress),
+                    ],
+                    if (updateState is UpdateError) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        updateState.message,
+                        style: const TextStyle(
+                            color: Colors.redAccent, fontSize: 12),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    ListenableBuilder(
+                      listenable: widget.nav,
+                      builder: (_, _) {
+                        final isFoc = widget.nav.isItemFocused(3, 0);
+                        return _UpdateButton(
+                          state: updateState,
+                          isFocused: isFoc,
+                          onPressed: () => _handleUpdateAction(updateState),
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 32),
+            ],
+          ),
+          const SizedBox(height: 32),
+        ],
 
         // ── Connection ──────────────────────────────────────────────────
         _Section(
-          title: 'Connection',
+          title: 'Verbindung',
           children: [
             Padding(
               padding: const EdgeInsets.all(12),
@@ -212,7 +272,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               color: isFoc ? Rs.accent : Colors.white70,
                               size: 20),
                           const SizedBox(width: 8),
-                          Text('Reconfigure server',
+                          Text('Server neu konfigurieren',
                               style: TextStyle(
                                   color:
                                       isFoc ? Rs.accent : Colors.white70)),
@@ -228,7 +288,192 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ],
     );
   }
+
+  void _handleUpdateAction(UpdateState state) {
+    switch (state) {
+      case UpdateAvailable():
+        ref.read(updateProvider.notifier).install(state.release);
+      case UpdateError():
+      case UpdateUpToDate():
+      case UpdateIdle():
+        ref.read(updateProvider.notifier).check();
+      case UpdateChecking():
+      case UpdateDownloading():
+        break; // already in progress
+    }
+  }
 }
+
+// ── Status chip ───────────────────────────────────────────────────────────────
+
+class _UpdateStatusChip extends StatelessWidget {
+  final UpdateState state;
+  const _UpdateStatusChip({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = switch (state) {
+      UpdateIdle()        => ('Nicht geprüft', Colors.white24),
+      UpdateChecking()    => ('Wird geprüft…', Colors.blue),
+      UpdateUpToDate()    => ('Aktuell', Colors.green),
+      UpdateAvailable()   => ('Update verfügbar', Rs.accent),
+      UpdateDownloading() => ('Wird heruntergeladen…', Rs.accent),
+      UpdateError()       => ('Fehler', Colors.redAccent),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.6)),
+      ),
+      child: Text(label,
+          style: TextStyle(
+              color: color, fontSize: 13, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+// ── Download progress bar ─────────────────────────────────────────────────────
+
+class _DownloadProgress extends StatelessWidget {
+  final double progress;
+  const _DownloadProgress({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: progress,
+            minHeight: 6,
+            backgroundColor: Colors.white12,
+            valueColor: AlwaysStoppedAnimation<Color>(Rs.accent),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '${(progress * 100).toStringAsFixed(0)} %',
+          style: const TextStyle(color: Colors.white54, fontSize: 12),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Release notes ─────────────────────────────────────────────────────────────
+
+class _ReleaseNotes extends StatelessWidget {
+  final String body;
+  const _ReleaseNotes({required this.body});
+
+  @override
+  Widget build(BuildContext context) {
+    if (body.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Text(
+        body,
+        style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+        maxLines: 6,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+}
+
+// ── Action button ─────────────────────────────────────────────────────────────
+
+class _UpdateButton extends StatefulWidget {
+  final UpdateState state;
+  final bool isFocused;
+  final VoidCallback onPressed;
+  const _UpdateButton({
+    required this.state,
+    required this.isFocused,
+    required this.onPressed,
+  });
+
+  @override
+  State<_UpdateButton> createState() => _UpdateButtonState();
+}
+
+class _UpdateButtonState extends State<_UpdateButton> {
+  bool _hovered = false;
+
+  bool get _active => widget.isFocused || _hovered;
+  bool get _busy => widget.state is UpdateChecking || widget.state is UpdateDownloading;
+
+  String get _label => switch (widget.state) {
+        UpdateAvailable()   => 'Jetzt aktualisieren',
+        UpdateChecking()    => 'Wird geprüft…',
+        UpdateDownloading() => 'Wird heruntergeladen…',
+        _                   => 'Auf Updates prüfen',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: _busy ? SystemMouseCursors.basic : SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit:  (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: _busy ? null : widget.onPressed,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          decoration: BoxDecoration(
+            color: widget.state is UpdateAvailable
+                ? (_active ? Rs.accentLight : Rs.accent)
+                : (_active ? Rs.panel3 : Rs.panel2),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: _active ? Rs.accent : Colors.white12,
+              width: 1.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_busy)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white54),
+                )
+              else
+                Icon(
+                  widget.state is UpdateAvailable
+                      ? Icons.system_update_rounded
+                      : Icons.refresh_rounded,
+                  size: 16,
+                  color: Colors.white,
+                ),
+              const SizedBox(width: 8),
+              Text(_label,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Section wrapper ───────────────────────────────────────────────────────────
 
 class _Section extends StatelessWidget {
   final String title;

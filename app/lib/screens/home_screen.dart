@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -17,6 +19,20 @@ import 'search_screen.dart';
 import 'settings_screen.dart';
 import 'profile_screen.dart';
 import 'watchlist_screen.dart';
+
+bool get _isDesktop =>
+    defaultTargetPlatform == TargetPlatform.windows ||
+    defaultTargetPlatform == TargetPlatform.macOS ||
+    defaultTargetPlatform == TargetPlatform.linux;
+
+class _MouseDragBehavior extends MaterialScrollBehavior {
+  const _MouseDragBehavior();
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+      };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App shell — sidebar + content area + toast overlay
@@ -347,7 +363,7 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
 
     return SingleChildScrollView(
       controller: _scrollCtrl,
-      physics: const NeverScrollableScrollPhysics(),
+      physics: _isDesktop ? null : const NeverScrollableScrollPhysics(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -567,11 +583,15 @@ class _ContinueRailState extends State<_ContinueRail> {
                 WidgetsBinding.instance.addPostFrameCallback(
                     (_) => _scrollToCol(focusedCol));
               }
-              return ListView.builder(
+              return ScrollConfiguration(
+                behavior: _isDesktop
+                    ? const _MouseDragBehavior()
+                    : const MaterialScrollBehavior(),
+                child: ListView.builder(
                 controller: _scrollCtrl,
                 scrollDirection: Axis.horizontal,
                 clipBehavior: Clip.none,
-                physics: const NeverScrollableScrollPhysics(),
+                physics: _isDesktop ? null : const NeverScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(_hPad, 18, _hPad, 18),
                 itemCount: widget.items.length,
                 itemBuilder: (context, i) {
@@ -601,6 +621,7 @@ class _ContinueRailState extends State<_ContinueRail> {
                     ),
                   );
                 },
+              ),
               );
             },
           ),

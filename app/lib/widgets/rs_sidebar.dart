@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../navigation/app_nav.dart';
 import '../screens/profile_screen.dart';
 import '../theme/rs_theme.dart';
+import 'rs_logo.dart';
 
 class RsSidebar extends StatelessWidget {
   final AppNavController nav;
@@ -66,61 +67,12 @@ class _Brand extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // collapsed: center icon only; expanded: icon + wordmark
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 7),
-      child: Row(
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: Rs.accent,
-              borderRadius: BorderRadius.circular(9),
-              boxShadow: [
-                BoxShadow(
-                  color: Rs.accent.withValues(alpha: 0.45),
-                  blurRadius: 14,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.play_arrow_rounded,
-                color: Colors.white, size: 17),
-          ),
-          // Flexible prevents layout overflow; opacity fades text
-          Flexible(
-            child: AnimatedOpacity(
-              opacity: expanded ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 120),
-              child: Padding(
-                padding: const EdgeInsets.only(left: 10),
-                child: RichText(
-                  overflow: TextOverflow.clip,
-                  maxLines: 1,
-                  text: const TextSpan(children: [
-                    TextSpan(
-                      text: 'Red',
-                      style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          color: Rs.text,
-                          letterSpacing: -0.4),
-                    ),
-                    TextSpan(
-                      text: 'Stream',
-                      style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          color: Rs.accent,
-                          letterSpacing: -0.4),
-                    ),
-                  ]),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+      padding: EdgeInsets.symmetric(horizontal: expanded ? 8 : 4, vertical: 0),
+      child: expanded
+          ? const RsLogo(iconSize: 26, textSize: 16)
+          : const RsLogo(iconSize: 26, showText: false),
     );
   }
 }
@@ -224,7 +176,8 @@ class _NavTile extends StatelessWidget {
             : const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
         padding: expanded
             ? EdgeInsets.fromLTRB(isFoc ? 16 : 12, 9, 12, 9)
-            : const EdgeInsets.symmetric(horizontal: 7, vertical: 9),
+            // (tile_w - icon_w) / 2 = (40 - 17) / 2 = 11.5 → centres icon
+            : const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
         decoration: BoxDecoration(
           color: isFoc
               ? Rs.accent
@@ -305,7 +258,7 @@ class _ProfileSwitchTile extends StatelessWidget {
             : const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
         padding: expanded
             ? EdgeInsets.fromLTRB(isFoc ? 16 : 12, 9, 12, 9)
-            : const EdgeInsets.symmetric(horizontal: 7, vertical: 9),
+            : const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
         decoration: BoxDecoration(
           color: isFoc ? Rs.accent : Colors.transparent,
           borderRadius: BorderRadius.circular(10),

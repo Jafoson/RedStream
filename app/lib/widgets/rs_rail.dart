@@ -1,9 +1,25 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../navigation/app_nav.dart';
 import '../theme/rs_theme.dart';
 import 'rs_poster.dart';
+
+bool get _isDesktop =>
+    defaultTargetPlatform == TargetPlatform.windows ||
+    defaultTargetPlatform == TargetPlatform.macOS ||
+    defaultTargetPlatform == TargetPlatform.linux;
+
+class _MouseDragBehavior extends MaterialScrollBehavior {
+  const _MouseDragBehavior();
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+      };
+}
 
 /// Horizontal scrolling rail with a section title bar.
 /// [rowIndex] maps to AppNavController.contentRow.
@@ -121,7 +137,11 @@ class _RsRailState extends State<RsRail> {
             // clipBehavior: none lets the border/shadow render past the list edges.
             SizedBox(
               height: widget.isContinue ? Rs.cwH + 36 : Rs.cardH + 36,
-              child: ListView.builder(
+              child: ScrollConfiguration(
+                behavior: _isDesktop
+                    ? const _MouseDragBehavior()
+                    : const MaterialScrollBehavior(),
+                child: ListView.builder(
                 controller: _scrollCtrl,
                 scrollDirection: Axis.horizontal,
                 clipBehavior: Clip.none,
@@ -145,6 +165,7 @@ class _RsRailState extends State<RsRail> {
                           ),
                   );
                 },
+              ),
               ),
             ),
           ],

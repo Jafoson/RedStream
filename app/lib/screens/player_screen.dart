@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'download_play_screen.dart';
 
@@ -30,6 +33,7 @@ class PlayerScreen extends StatefulWidget {
   final String? streamUrl;
   final String? episodeUrl;
   final String? seriesUrl;
+  final bool startFromBeginning;
 
   const PlayerScreen({
     super.key,
@@ -42,6 +46,7 @@ class PlayerScreen extends StatefulWidget {
     this.streamUrl,
     this.episodeUrl,
     this.seriesUrl,
+    this.startFromBeginning = false,
   });
 
   @override
@@ -79,6 +84,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int? _nextEpCountdown;
   bool _nextEpPopupPinned = false; // stays true after countdown is cancelled
   Timer? _countdownTimer;
+  // Fullscreen state (desktop only)
+  bool _isFullscreen = false;
+
+  // Guard against stale stream events (position/completed) during episode switch
+  bool _episodeSwitching = false;
+  // True once _player.seek(_resumePosition) has been called; prevents double-seek
+  // if the duration stream fires multiple times.
+  bool _resumeApplied = false;
 
   // Accelerated D-pad seeking with preview (seek bar moves, player commits on release)
   Timer? _seekAccelTimer;
@@ -131,7 +144,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final epUrl = _activeEpisodeUrl;
     if (epUrl == null || epUrl.isEmpty) return;
     final dur = _duration.inMilliseconds / 1000.0;
-    final pos = _position.inMilliseconds / 1000.0;
+    // If the seek to the resume position hasn't landed yet, use the target
+    // resume position rather than the stale 0-second stream value so that
+    // a quick exit doesn't wipe out previously saved watch time.
+    final pos = _resumePosition != null
+        ? _resumePosition!.inMilliseconds / 1000.0
+        : _position.inMilliseconds / 1000.0;
     if (dur < 1) return;
     try {
       await widget.api.saveProgress(
@@ -149,7 +167,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (_) {}
   }
 
+  bool get _isDesktop =>
+      !kIsWeb &&
+      (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+
+  Future<void> _toggleFullscreen() async {
+    final next = !_isFullscreen;
+    // Pause before the fullscreen transition — on Windows the native video
+    // texture is briefly invalidated during window resize, which freezes the
+    // player permanently unless we pause/resume around the mode change.
+    final wasPlaying = _isPlaying;
+    if (wasPlaying) await _player.pause();
+    await windowManager.setFullScreen(next);
+    if (!mounted) return;
+    setState(() => _isFullscreen = next);
+    // Let the new window surface settle before resuming playback.
+    await Future.delayed(const Duration(milliseconds: 250));
+    if (wasPlaying && mounted) _player.play();
+  }
+
   Future<void> _saveAndPop() async {
+    if (_isDesktop && _isFullscreen) await windowManager.setFullScreen(false);
     await _saveProgress(final_: true);
     if (mounted) Navigator.of(context).pop();
   }
@@ -191,27 +229,37 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _subs.add(_player.stream.position.listen((v) {
         if (!mounted) return;
         setState(() => _position = v);
+        // Once the position stream confirms the seek has landed, clear the
+        // pending resume so _saveProgress starts using the live position.
+        if (_resumePosition != null &&
+            v >= _resumePosition! - const Duration(seconds: 5)) {
+          _resumePosition = null;
+        }
         final rem = (_duration - v).inSeconds;
         if (rem <= 45 && rem > 0 && _duration.inSeconds >= 120 &&
-            _nextEpCountdown == null && !_nextEpPopupPinned && !_loading) {
+            _nextEpCountdown == null && !_nextEpPopupPinned && !_loading &&
+            !_episodeSwitching) {
           _startNextEpCountdown();
         }
       }));
       _subs.add(_player.stream.duration.listen((v) {
         if (mounted) setState(() => _duration = v);
-        if (v.inMilliseconds > 0 && _resumePosition != null) {
+        if (v.inMilliseconds > 0 && _resumePosition != null && !_resumeApplied) {
+          _resumeApplied = true;
           _player.seek(_resumePosition!);
-          _resumePosition = null;
+          // _resumePosition is intentionally kept non-null here so that
+          // _saveProgress can use it as a fallback if the user exits before
+          // the position stream confirms the seek has landed.
         }
       }));
       _subs.add(_player.stream.buffering.listen((v) {
         if (mounted) setState(() => _buffering = v);
       }));
       _subs.add(_player.stream.completed.listen((done) {
-        if (done && mounted) _saveAndPop();
+        if (done && mounted && !_episodeSwitching) _saveAndPop();
       }));
 
-      if (_activeEpisodeUrl?.isNotEmpty == true) {
+      if (!widget.startFromBeginning && _activeEpisodeUrl?.isNotEmpty == true) {
         try {
           final all = await widget.api.getAllProgress();
           final prog =
@@ -506,6 +554,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 episodeTitle: 'Folge $nextEp',
                 availableLanguages: const [],
                 customPathId: widget.customPathId,
+                skipResume: true,
               ),
             ),
           )
@@ -544,9 +593,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _progressTimer?.cancel();
     _progressTimer = null;
 
-    // Swap media in the existing player — no new Player(), no navigation
+    // Swap media in the existing player — no new Player(), no navigation.
+    // _episodeSwitching blocks the position listener and stream.completed from
+    // firing the countdown or popping the screen on stale events from the
+    // previous episode's media. Reset after 3 s to let the new media settle.
+    _episodeSwitching = true;
     _streamFile = _extractStreamFile(streamUrl);
     await _player.open(Media(streamUrl, httpHeaders: _authHeaders()));
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _episodeSwitching = false);
+    });
     _progressTimer =
         Timer.periodic(const Duration(seconds: 10), (_) => _saveProgress());
 
@@ -886,6 +942,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       onBack: _saveAndPop,
                       onNextEp: _navigateToNextEpisode,
                       fmt: _fmt,
+                      isDesktop: _isDesktop,
+                      isFullscreen: _isFullscreen,
+                      onFullscreen: _isDesktop ? _toggleFullscreen : null,
                     ),
                   ),
 
@@ -1018,6 +1077,9 @@ class _PlayerUI extends StatefulWidget {
   final VoidCallback onBack;
   final VoidCallback onNextEp;
   final String Function(Duration) fmt;
+  final bool isDesktop;
+  final bool isFullscreen;
+  final VoidCallback? onFullscreen;
 
   const _PlayerUI({
     required this.position,
@@ -1040,6 +1102,9 @@ class _PlayerUI extends StatefulWidget {
     required this.onBack,
     required this.onNextEp,
     required this.fmt,
+    required this.isDesktop,
+    required this.isFullscreen,
+    this.onFullscreen,
   });
 
   @override
@@ -1120,31 +1185,31 @@ class _PlayerUIState extends State<_PlayerUI> {
                     ),
                   ),
                   const Spacer(),
-                  // RedStream logo — same chip style
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 9),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.white24, width: 1.5),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Image.asset('assets/logo.png', width: 22, height: 22),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'RedStream',
-                          style: TextStyle(
-                              color: Rs.accent,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.5),
+                  // Fullscreen toggle (desktop only)
+                  if (widget.isDesktop && widget.onFullscreen != null) ...[
+                    GestureDetector(
+                      onTap: widget.onFullscreen,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 11),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          borderRadius: BorderRadius.circular(10),
+                          border:
+                              Border.all(color: Colors.white38, width: 1.5),
                         ),
-                      ],
+                        child: Icon(
+                          widget.isFullscreen
+                              ? Icons.fullscreen_exit_rounded
+                              : Icons.fullscreen_rounded,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 12),
+                  ],
                 ],
               ),
             ),

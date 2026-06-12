@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api/api_service.dart';
 import '../models/models.dart';
 import '../navigation/app_nav.dart';
+import '../services/update_service.dart';
 
 // ---------------------------------------------------------------------------
 // App navigation controller (D-Pad focus engine)
@@ -495,4 +496,85 @@ class LibraryNotifier extends StateNotifier<AsyncValue<List<LibraryTitle>>> {
     await _api.deleteFromLibrary(folder: folder, season: season, episode: episode);
     await load();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-update
+// ---------------------------------------------------------------------------
+
+sealed class UpdateState {
+  const UpdateState();
+}
+
+class UpdateIdle extends UpdateState {
+  const UpdateIdle();
+}
+
+class UpdateChecking extends UpdateState {
+  const UpdateChecking();
+}
+
+class UpdateUpToDate extends UpdateState {
+  final String version;
+  const UpdateUpToDate(this.version);
+}
+
+class UpdateAvailable extends UpdateState {
+  final ReleaseInfo release;
+  final String currentVersion;
+  const UpdateAvailable({required this.release, required this.currentVersion});
+}
+
+class UpdateDownloading extends UpdateState {
+  final ReleaseInfo release;
+  final double progress;
+  const UpdateDownloading({required this.release, required this.progress});
+}
+
+class UpdateError extends UpdateState {
+  final String message;
+  const UpdateError(this.message);
+}
+
+final updateProvider =
+    StateNotifierProvider<UpdateNotifier, UpdateState>((_) => UpdateNotifier());
+
+class UpdateNotifier extends StateNotifier<UpdateState> {
+  UpdateNotifier() : super(const UpdateIdle());
+
+  final _svc = UpdateService();
+
+  Future<void> check() async {
+    state = const UpdateChecking();
+    try {
+      final current = await _svc.currentVersion();
+      final release = await _svc.fetchLatestRelease();
+      if (release == null || release.version.isEmpty) {
+        state = UpdateUpToDate(current);
+        return;
+      }
+      if (UpdateService.isNewer(current, release.version)) {
+        state = UpdateAvailable(release: release, currentVersion: current);
+      } else {
+        state = UpdateUpToDate(current);
+      }
+    } catch (e) {
+      state = UpdateError(e.toString());
+    }
+  }
+
+  Future<void> install(ReleaseInfo release) async {
+    state = UpdateDownloading(release: release, progress: 0);
+    try {
+      await _svc.downloadAndInstall(
+        release,
+        onProgress: (p) =>
+            state = UpdateDownloading(release: release, progress: p),
+      );
+    } catch (e) {
+      state = UpdateError(e.toString());
+    }
+  }
+
+  void reset() => state = const UpdateIdle();
 }

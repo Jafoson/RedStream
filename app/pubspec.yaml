@@ -25,13 +25,41 @@ dependencies:
   media_kit_libs_macos_video: ^1.0.4
   # Image caching
   cached_network_image: ^3.4.1
+  # Desktop window management (fullscreen etc.)
+  window_manager: ^0.4.3
+  # Auto-update
+  package_info_plus: ^8.1.0
+  archive: ^3.6.1
+  path_provider: ^2.1.4
+  open_file: ^3.3.2
+  # SVG rendering
+  flutter_svg: ^2.0.10+1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
 
 flutter:
   uses-material-design: true
   assets:
     - assets/logo.png
+    - assets/rs_logo.svg
+    - assets/app_icon.png
+
+flutter_launcher_icons:
+  image_path: "assets/app_icon.png"
+  android: true
+  ios: false
+  macos:
+    generate: true
+    image_path: "assets/app_icon.png"
+  windows:
+    generate: true
+    image_path: "assets/app_icon.png"
+    icon_size: 256
+  # Android adaptive icon
+  adaptive_icon_background: "#D9824B"
+  adaptive_icon_foreground: "assets/app_icon_foreground.png"
+  min_sdk_android: 21
