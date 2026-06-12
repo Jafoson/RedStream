@@ -1,3 +1,5 @@
+import 'dart:async' show Timer;
+
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
@@ -232,6 +234,7 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
   // are currently visible (continue/watchlist/browse can each be absent).
   final _rowKeys = <int, GlobalKey>{};
   int _lastScrollRow = -1;
+  Timer? _clockTimer;
 
   @override
   void initState() {
@@ -240,11 +243,29 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ref.read(continueWatchingProvider.notifier).refresh();
     });
+    _scheduleClock();
+  }
+
+  /// Fires a setState() at the start of every next minute so the clock and
+  /// date always reflect the current time without drifting.
+  void _scheduleClock() {
+    final now = DateTime.now();
+    final msUntilNextMinute =
+        (60 - now.second) * 1000 - now.millisecond;
+    _clockTimer = Timer(Duration(milliseconds: msUntilNextMinute), () {
+      if (!mounted) return;
+      setState(() {});
+      // After the first aligned tick, fire every full minute.
+      _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    });
   }
 
   @override
   void dispose() {
     widget.nav.removeListener(_onNavChanged);
+    _clockTimer?.cancel();
     _scrollCtrl.dispose();
     super.dispose();
   }

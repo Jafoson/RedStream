@@ -99,6 +99,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _seekHoldNegative = false;
   Duration? _seekPreview; // null = not scrubbing
 
+  // After _player.seek(), slow devices (Chromecast) briefly re-emit the old
+  // position before settling. We suppress those stale events for 2 s.
+  Duration? _seekTarget;
+  DateTime? _seekIssuedAt;
+
   // Relative stream file path (e.g. "One Piece/S01E009.m3u8") for thumbnail lookup
   String? _streamFile;
 
@@ -228,6 +233,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }));
       _subs.add(_player.stream.position.listen((v) {
         if (!mounted) return;
+        // Suppress stale position events for 2 s after a seek.
+        // On slow devices (Chromecast) the player briefly re-emits the
+        // pre-seek position before settling, causing a visible "jump back".
+        final st = _seekTarget;
+        if (st != null) {
+          final age = DateTime.now().difference(_seekIssuedAt!).inMilliseconds;
+          if (age > 2000) {
+            _seekTarget = null; // grace period expired, accept all events
+          } else if ((v - st).abs() > const Duration(seconds: 3)) {
+            return; // stale event — too far from seek target, drop it
+          } else {
+            _seekTarget = null; // close enough, seek has settled
+          }
+        }
         setState(() => _position = v);
         // Once the position stream confirms the seek has landed, clear the
         // pending resume so _saveProgress starts using the live position.
@@ -340,13 +359,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _seek(Duration delta) {
     final raw = _position + delta;
-    _player.seek(raw < Duration.zero
+    final target = raw < Duration.zero
         ? Duration.zero
-        : (raw > _duration ? _duration : raw));
+        : (raw > _duration ? _duration : raw);
+    _seekTarget = target;
+    _seekIssuedAt = DateTime.now();
+    _player.seek(target);
     _resetHideTimer();
     final s = delta.inSeconds.abs();
     final label = delta.isNegative ? '$s Sek. zurück' : '$s Sek. vor';
-    setState(() => _seekLabel = label);
+    setState(() { _position = target; _seekLabel = label; });
     _seekLabelTimer?.cancel();
     _seekLabelTimer = Timer(const Duration(milliseconds: 800), () {
       if (mounted) setState(() => _seekLabel = null);
@@ -354,6 +376,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _seekTo(Duration pos) {
+    _seekTarget = pos;
+    _seekIssuedAt = DateTime.now();
+    setState(() => _position = pos);
     _player.seek(pos);
     _resetHideTimer();
   }
@@ -398,15 +423,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _seekAccelTimer = null;
     _seekHoldStart = null;
     final target = _seekPreview;
-    _seekPreview = null;
     if (target != null) {
+      _seekTarget = target;
+      _seekIssuedAt = DateTime.now();
       _player.seek(target);
+      // Clear preview and optimistically set _position to target in one
+      // setState — avoids the flicker caused by preview→null before the
+      // position stream confirms the new position.
+      setState(() { _seekPreview = null; _position = target; });
+    } else {
+      _seekPreview = null;
     }
     _seekLabelTimer?.cancel();
     _seekLabelTimer = Timer(const Duration(milliseconds: 600), () {
       if (mounted) setState(() => _seekLabel = null);
     });
-    _resetHideTimer(); // restart so UI auto-hides after releasing the key
+    _resetHideTimer();
   }
 
   // ── Next episode ──────────────────────────────────────────────────────────
@@ -515,6 +547,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _navigateToNextEpisode() async {
     _countdownTimer?.cancel();
     _countdownTimer = null;
+    // Block the position listener from starting another countdown while we
+    // await _findNextEpStreamUrl() — on slow devices (Chromecast) that call
+    // can take several seconds, during which _nextEpCountdown is null and all
+    // other guards are false, causing a second skip to fire.
+    _episodeSwitching = true;
     if (mounted) setState(() { _nextEpCountdown = null; _nextEpPopupPinned = false; });
 
     final nextEp = _activeEpisode + 1;

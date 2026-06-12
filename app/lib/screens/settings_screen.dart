@@ -64,23 +64,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final currentUrl = ref.watch(serverUrlProvider);
     final updateState = ref.watch(updateProvider);
 
-    // Nav: row 0 = URL field, row 1 = Save, row 2 = Reconfigure, row 3 = Update btn
+    // Nav rows match visual top-to-bottom order:
+    //   0 = URL field, 1 = Save, 2 = Update btn (if shown), 3 = Reconfigure
+    // Without update support: 0 = URL, 1 = Save, 2 = Reconfigure
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      widget.nav.registerNav([1, 1, 1, 1], (row, col) {
-        switch (row) {
-          case 0:
-            _urlFocus.requestFocus();
-          case 1:
-            _saveUrl();
-          case 2:
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const SetupScreen()),
-            );
-          case 3:
-            _handleUpdateAction(updateState);
-        }
-      });
+      if (_supportsUpdate) {
+        widget.nav.registerNav([1, 1, 1, 1], (row, col) {
+          switch (row) {
+            case 0: _urlFocus.requestFocus();
+            case 1: _saveUrl();
+            case 2: _handleUpdateAction(updateState);
+            case 3:
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const SetupScreen()),
+              );
+          }
+        });
+      } else {
+        widget.nav.registerNav([1, 1, 1], (row, col) {
+          switch (row) {
+            case 0: _urlFocus.requestFocus();
+            case 1: _saveUrl();
+            case 2:
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const SetupScreen()),
+              );
+          }
+        });
+      }
     });
 
     return ListView(
@@ -214,7 +226,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ListenableBuilder(
                       listenable: widget.nav,
                       builder: (_, _) {
-                        final isFoc = widget.nav.isItemFocused(3, 0);
+                        final isFoc = widget.nav.isItemFocused(2, 0);
                         return _UpdateButton(
                           state: updateState,
                           isFocused: isFoc,
@@ -239,7 +251,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: ListenableBuilder(
                 listenable: widget.nav,
                 builder: (_, _) {
-                  final isFoc = widget.nav.isItemFocused(2, 0);
+                  final isFoc = widget.nav.isItemFocused(3, 0);
                   return GestureDetector(
                     onTap: () => Navigator.of(context).pushReplacement(
                       MaterialPageRoute(
@@ -316,8 +328,8 @@ class _UpdateStatusChip extends StatelessWidget {
       UpdateIdle()        => ('Nicht geprüft', Colors.white24),
       UpdateChecking()    => ('Wird geprüft…', Colors.blue),
       UpdateUpToDate()    => ('Aktuell', Colors.green),
-      UpdateAvailable()   => ('Update verfügbar', Rs.accent),
-      UpdateDownloading() => ('Wird heruntergeladen…', Rs.accent),
+      UpdateAvailable(:final release)   => ('→ v${release.version}', Rs.accent),
+      UpdateDownloading(:final release) => ('↓ v${release.version}', Rs.accent),
       UpdateError()       => ('Fehler', Colors.redAccent),
     };
     return Container(

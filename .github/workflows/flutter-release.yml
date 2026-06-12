@@ -31,6 +31,18 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Set app version
+        shell: python
+        run: |
+          import re, pathlib
+          p = pathlib.Path('app/pubspec.yaml')
+          p.write_text(re.sub(
+            r'^version:.*',
+            'version: ${{ inputs.version }}+${{ github.run_number }}',
+            p.read_text(),
+            flags=re.MULTILINE
+          ))
+
       - name: Flutter pub get
         working-directory: app
         run: flutter pub get
@@ -65,6 +77,18 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Set app version
+        shell: python
+        run: |
+          import re, pathlib
+          p = pathlib.Path('app/pubspec.yaml')
+          p.write_text(re.sub(
+            r'^version:.*',
+            'version: ${{ inputs.version }}+${{ github.run_number }}',
+            p.read_text(),
+            flags=re.MULTILINE
+          ))
+
       - name: Flutter pub get
         working-directory: app
         run: flutter pub get
@@ -96,6 +120,18 @@ jobs:
         with:
           channel: stable
           cache: true
+
+      - name: Set app version
+        shell: python
+        run: |
+          import re, pathlib
+          p = pathlib.Path('app/pubspec.yaml')
+          p.write_text(re.sub(
+            r'^version:.*',
+            'version: ${{ inputs.version }}+${{ github.run_number }}',
+            p.read_text(),
+            flags=re.MULTILINE
+          ))
 
       - name: Flutter pub get
         working-directory: app
