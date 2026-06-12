@@ -40,6 +40,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   int? _autosyncJobId;
   final _playFocusNode = FocusNode();
   List<FocusNode> _seasonFocusNodes = [];
+  final _mainScroll = ScrollController();
+  final _seasonSectionKey = GlobalKey();
 
   @override
   void initState() {
@@ -51,6 +53,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   void dispose() {
     _playFocusNode.dispose();
     for (final n in _seasonFocusNodes) n.dispose();
+    _mainScroll.dispose();
     super.dispose();
   }
 
@@ -332,6 +335,16 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
             _seasonFocusNodes.isNotEmpty) {
           _seasonFocusNodes[_selectedSeason.clamp(0, _seasonFocusNodes.length - 1)]
               .requestFocus();
+          // Scroll the ListView so the season section is visible
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final ctx = _seasonSectionKey.currentContext;
+            if (ctx != null) {
+              Scrollable.ensureVisible(ctx,
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
+                  alignment: 0.0);
+            }
+          });
           return KeyEventResult.handled;
         }
         // Up from any season tab → return to play button
@@ -366,6 +379,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                     onToggleWatchlist: _toggleWatchlist,
                     playFocusNode: _playFocusNode,
                     seasonFocusNodes: _seasonFocusNodes,
+                    scrollController: _mainScroll,
+                    seasonSectionKey: _seasonSectionKey,
                   ),
       ),
     );
@@ -393,6 +408,8 @@ class _DetailBody extends StatelessWidget {
   final VoidCallback onToggleWatchlist;
   final FocusNode? playFocusNode;
   final List<FocusNode> seasonFocusNodes;
+  final ScrollController? scrollController;
+  final GlobalKey? seasonSectionKey;
 
   const _DetailBody({
     required this.detail,
@@ -411,11 +428,14 @@ class _DetailBody extends StatelessWidget {
     required this.onToggleWatchlist,
     this.playFocusNode,
     this.seasonFocusNodes = const [],
+    this.scrollController,
+    this.seasonSectionKey,
   });
 
   @override
   Widget build(BuildContext context) {
     return ListView(
+      controller: scrollController,
       padding: EdgeInsets.zero,
       children: [
         // ── Hero section ────────────────────────────────────────────────────
@@ -433,9 +453,10 @@ class _DetailBody extends StatelessWidget {
 
         // ── Season tabs ─────────────────────────────────────────────────────
         if (seasons.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.fromLTRB(64, 28, 64, 6),
-            child: _SectionBar('Folgen'),
+          Padding(
+            key: seasonSectionKey,
+            padding: const EdgeInsets.fromLTRB(64, 28, 64, 6),
+            child: const _SectionBar('Folgen'),
           ),
           _SeasonBar(
             seasons: seasons,
@@ -581,33 +602,34 @@ class _HeroSection extends StatelessWidget {
             ),
           ),
 
-          // Content — bottom left
+          // Content — bottom left, top-clamped below the back button
           Positioned(
             left: 64,
+            top: 88,
             bottom: 36,
             right: 480,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 Text(
                   detail.title,
                   style: const TextStyle(
-                    fontSize: 62,
+                    fontSize: 46,
                     fontWeight: FontWeight.w800,
                     color: Colors.white,
-                    letterSpacing: -2.0,
-                    height: 0.97,
+                    letterSpacing: -1.5,
+                    height: 1.0,
                     shadows: [Shadow(color: Color(0x88000000), blurRadius: 24)],
                   ),
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 // Meta chips
                 Wrap(
-                  spacing: 10,
-                  runSpacing: 6,
+                  spacing: 8,
+                  runSpacing: 5,
                   children: [
                     if (detail.releaseYear.isNotEmpty)
                       _MetaChip(detail.releaseYear),
@@ -615,33 +637,34 @@ class _HeroSection extends StatelessWidget {
                   ],
                 ),
                 if (detail.description.isNotEmpty) ...[
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 10),
                   Text(
                     detail.description,
                     style: const TextStyle(
-                      fontSize: 17,
+                      fontSize: 14,
                       color: Color(0xFFD7D8DA),
-                      height: 1.5,
+                      height: 1.45,
                     ),
-                    maxLines: 4,
+                    maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
-                const SizedBox(height: 22),
+                const SizedBox(height: 16),
                 // Action buttons
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
                   children: [
                     TvFocusable(
                       focusNode: playFocusNode,
                       onActivate: resumeProgress != null ? onResume : onPlay,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(12),
                       child: Container(
-                        height: 52,
-                        padding: const EdgeInsets.symmetric(horizontal: 28),
+                        height: 42,
+                        padding: const EdgeInsets.symmetric(horizontal: 18),
                         decoration: BoxDecoration(
                           color: resumeProgress != null ? Colors.white : Rs.accent,
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -651,9 +674,9 @@ class _HeroSection extends StatelessWidget {
                                   ? Icons.play_circle_outline_rounded
                                   : Icons.play_arrow_rounded,
                               color: resumeProgress != null ? Colors.black : Colors.white,
-                              size: 22,
+                              size: 18,
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: 7),
                             Text(
                               resumeProgress != null
                                   ? resumeIsNextEp
@@ -663,51 +686,50 @@ class _HeroSection extends StatelessWidget {
                               style: TextStyle(
                                   color: resumeProgress != null ? Colors.black : Colors.white,
                                   fontWeight: FontWeight.w700,
-                                  fontSize: 17),
+                                  fontSize: 14),
                             ),
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     if (resumeProgress != null)
                       TvFocusable(
                         onActivate: onPlay,
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(12),
                         child: Container(
-                          height: 52,
-                          padding: const EdgeInsets.symmetric(horizontal: 28),
+                          height: 42,
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: Rs.line2),
                           ),
                           child: const Row(
                             children: [
-                              Icon(Icons.skip_previous_rounded, color: Colors.white, size: 22),
-                              SizedBox(width: 8),
+                              Icon(Icons.skip_previous_rounded, color: Colors.white, size: 18),
+                              SizedBox(width: 7),
                               Text('Von vorne',
                                   style: TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.w700,
-                                      fontSize: 17)),
+                                      fontSize: 14)),
                             ],
                           ),
                         ),
                       ),
-                    if (resumeProgress != null) const SizedBox(width: 12),
                     TvFocusable(
                       onActivate: onToggleWatchlist,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(12),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
-                        height: 52,
-                        padding: const EdgeInsets.symmetric(horizontal: 28),
+                        height: 42,
+                        padding: const EdgeInsets.symmetric(horizontal: 18),
                         decoration: BoxDecoration(
                           color: inWatchlist
                               ? Rs.accent.withValues(alpha: 0.22)
                               : Colors.white.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                           border: Border.all(
                             color: inWatchlist ? Rs.accent : Rs.line2,
                             width: inWatchlist ? 2 : 1,
@@ -721,15 +743,15 @@ class _HeroSection extends StatelessWidget {
                                   ? Icons.bookmark_rounded
                                   : Icons.bookmark_border_rounded,
                               color: inWatchlist ? Rs.accent : Colors.white,
-                              size: 22,
+                              size: 18,
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: 7),
                             Text(
                               inWatchlist ? 'In der Watchlist' : 'Watchlist',
                               style: TextStyle(
                                 color: inWatchlist ? Rs.accent : Colors.white,
                                 fontWeight: FontWeight.w700,
-                                fontSize: 17,
+                                fontSize: 14,
                               ),
                             ),
                           ],
@@ -754,14 +776,14 @@ class _MetaChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: Rs.gold.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(5),
       ),
       child: Text(label,
           style: const TextStyle(
-              color: Rs.gold, fontSize: 14, fontWeight: FontWeight.w800)),
+              color: Rs.gold, fontSize: 12, fontWeight: FontWeight.w800)),
     );
   }
 }
@@ -773,14 +795,14 @@ class _GenreTag extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: Rs.line2),
       ),
       child: Text(genre,
           style: const TextStyle(
-              color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+              color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
     );
   }
 }
@@ -810,7 +832,7 @@ class _SectionBar extends StatelessWidget {
   }
 }
 
-class _SeasonBar extends StatelessWidget {
+class _SeasonBar extends StatefulWidget {
   final List<Season> seasons;
   final int selected;
   final void Function(int) onSelect;
@@ -824,35 +846,78 @@ class _SeasonBar extends StatelessWidget {
   });
 
   @override
+  State<_SeasonBar> createState() => _SeasonBarState();
+}
+
+class _SeasonBarState extends State<_SeasonBar> {
+  final _scrollCtrl = ScrollController();
+  late List<GlobalKey> _tabKeys;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabKeys = List.generate(widget.seasons.length, (_) => GlobalKey());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelected());
+  }
+
+  @override
+  void didUpdateWidget(_SeasonBar old) {
+    super.didUpdateWidget(old);
+    if (old.seasons.length != widget.seasons.length) {
+      _tabKeys = List.generate(widget.seasons.length, (_) => GlobalKey());
+    }
+    if (old.selected != widget.selected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelected());
+    }
+  }
+
+  void _scrollToSelected() {
+    if (!mounted) return;
+    final i = widget.selected;
+    if (i >= _tabKeys.length) return;
+    final ctx = _tabKeys[i].currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(ctx,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+          alignment: 0.2);
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
+      controller: _scrollCtrl,
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(64, 22, 64, 6),
       child: Row(
-        children: List.generate(seasons.length, (i) {
-          final isOn = i == selected;
+        children: List.generate(widget.seasons.length, (i) {
+          final isOn = i == widget.selected;
           return Padding(
+            key: _tabKeys[i],
             padding: const EdgeInsets.only(right: 12),
             child: TvFocusable(
-              focusNode: i < focusNodes.length ? focusNodes[i] : null,
-              onActivate: () => onSelect(i),
+              focusNode: i < widget.focusNodes.length ? widget.focusNodes[i] : null,
+              onActivate: () => widget.onSelect(i),
               borderRadius: BorderRadius.circular(11),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
                 decoration: BoxDecoration(
-                  color: isOn
-                      ? Rs.accent.withValues(alpha: 0.18)
-                      : Rs.panel2,
+                  color: isOn ? Rs.accent.withValues(alpha: 0.18) : Rs.panel2,
                   borderRadius: BorderRadius.circular(11),
                   border: Border.all(
-                    color: isOn
-                        ? Rs.accent.withValues(alpha: 0.5)
-                        : Rs.line,
+                    color: isOn ? Rs.accent.withValues(alpha: 0.5) : Rs.line,
                   ),
                 ),
                 child: Text(
-                  seasons[i].label,
+                  widget.seasons[i].label,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
@@ -885,25 +950,25 @@ class _EpisodeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 10),
       child: TvFocusable(
         onActivate: onPlay,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
             color: Rs.panel2,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(color: Rs.line),
           ),
           child: Row(
             children: [
               // Thumbnail
               ClipRRect(
-                borderRadius: BorderRadius.circular(11),
+                borderRadius: BorderRadius.circular(9),
                 child: SizedBox(
-                  width: 180,
-                  height: 102,
+                  width: 148,
+                  height: 83,
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
@@ -981,7 +1046,7 @@ class _EpisodeRow extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 20),
+              const SizedBox(width: 14),
               // Info
               Expanded(
                 child: Column(
@@ -990,8 +1055,8 @@ class _EpisodeRow extends StatelessWidget {
                     Text(
                       '${ep.episodeNumber}. ${ep.displayTitle}',
                       style: const TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
                           color: Rs.text),
                     ),
                     const SizedBox(height: 6),

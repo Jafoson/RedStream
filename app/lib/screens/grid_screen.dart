@@ -8,6 +8,7 @@ import '../navigation/app_nav.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
 import '../widgets/rs_poster.dart';
+import '../widgets/tv_poster_grid.dart';
 
 enum GridKind { series, anime }
 
@@ -47,7 +48,7 @@ class GridScreen extends ConsumerStatefulWidget {
 }
 
 class _GridScreenState extends ConsumerState<GridScreen> {
-  static const _cols = 5;
+  int _cols = 5;
   static const _perPage = 25;
 
   _Sort _sort = _Sort.all;
@@ -236,6 +237,19 @@ class _GridScreenState extends ConsumerState<GridScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final newCols = TvPosterGrid.calcCols(constraints.maxWidth);
+      if (newCols != _cols) {
+        _cols = newCols;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() {});
+        });
+      }
+      return _buildBody(context);
+    });
+  }
+
+  Widget _buildBody(BuildContext context) {
     final browse = ref.watch(browseProvider);
 
     // Genres are a separate nav row only in Alle mode when they exist
@@ -571,7 +585,7 @@ class _Chip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
       duration: const Duration(milliseconds: 140),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       decoration: BoxDecoration(
         color: active
             ? activeColor
@@ -587,7 +601,7 @@ class _Chip extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 15,
+          fontSize: 12,
           fontWeight: FontWeight.w700,
           color: active
               ? Colors.white

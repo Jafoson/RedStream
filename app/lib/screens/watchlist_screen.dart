@@ -21,7 +21,7 @@ class WatchlistScreen extends ConsumerStatefulWidget {
 }
 
 class _WatchlistScreenState extends ConsumerState<WatchlistScreen> {
-  static const _cols = 6;
+  int _cols = 5;
   final _scrollCtrl = ScrollController();
   _WatchlistSort _sort = _WatchlistSort.recentlyWatched;
 
@@ -86,6 +86,19 @@ class _WatchlistScreenState extends ConsumerState<WatchlistScreen> {
   }
 
   Widget _buildContent(List<WatchlistEntry> items) {
+    return LayoutBuilder(builder: (_, constraints) {
+      final newCols = TvPosterGrid.calcCols(constraints.maxWidth);
+      if (newCols != _cols) {
+        _cols = newCols;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() {});
+        });
+      }
+      return _buildList(items);
+    });
+  }
+
+  Widget _buildList(List<WatchlistEntry> items) {
     final sortedItems = _sorted(items);
     final seriesItems = sortedItems.map((e) => e.asSeriesResult).toList();
     final entryMap = {for (final e in sortedItems) e.url: e};
@@ -311,7 +324,7 @@ class _SortChip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 140),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
         decoration: BoxDecoration(
           color: selected
               ? Rs.accent
@@ -331,15 +344,15 @@ class _SortChip extends StatelessWidget {
           children: [
             Icon(
               icon,
-              size: 16,
+              size: 13,
               color: selected ? Colors.white : Rs.muted,
             ),
-            const SizedBox(width: 7),
+            const SizedBox(width: 6),
             Text(
               label,
               style: TextStyle(
                 color: selected ? Colors.white : Rs.muted,
-                fontSize: 14,
+                fontSize: 12,
                 fontWeight:
                     selected ? FontWeight.w700 : FontWeight.w500,
               ),

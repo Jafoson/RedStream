@@ -5,10 +5,12 @@ import '../models/models.dart';
 import '../navigation/app_nav.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
-import '../utils/tv_keyboard.dart';
 import '../widgets/rs_poster.dart';
+import '../widgets/tv_keyboard_dialog.dart';
+import '../widgets/tv_poster_grid.dart';
 
-// Nav rows: 0 = search bar, 1 = category tabs, 2+ = result grid rows.
+// Nav rows (when keyboard is closed):
+//   0 = search bar, 1 = category tabs, 2+ = result grid rows.
 const _kbBase = 2;
 
 class SearchScreen extends ConsumerStatefulWidget {
@@ -22,34 +24,64 @@ class SearchScreen extends ConsumerStatefulWidget {
 }
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
-  static const _cols = 6;
+  int _cols = 5;
   static const _cats = ['Alle', 'Serien', 'Anime'];
   static const _catSites = {'Alle': 'both', 'Serien': 'sto', 'Anime': 'aniworld'};
   String _cat = 'Alle';
+  String _query = '';
 
-  final _ctrl = TextEditingController();
-  final _searchFocus = FocusNode(skipTraversal: true);
+  bool _keyboardOpen = false;
+  final _keyboardKey = GlobalKey<TvKeyboardInlineState>();
+
+  // Track sidebar focus transitions to auto-open keyboard when the user
+  // navigates RIGHT from the sidebar into the search content area.
+  bool _prevSidebarFocused = true;
+
   final _resultsScrollCtrl = ScrollController();
   final _resultRowKeys = <int, GlobalKey>{};
 
   @override
   void initState() {
     super.initState();
-    _searchFocus.addListener(_onSearchFocusChange);
-    _searchFocus.showKeyboardOnFocus();
+    _prevSidebarFocused = widget.nav.sidebarFocused;
     widget.nav.addListener(_onNavChanged);
   }
 
   @override
   void dispose() {
-    // Ensure nav is re-enabled when leaving search screen
     widget.nav.textInputActive = false;
-    _searchFocus.removeListener(_onSearchFocusChange);
+    widget.nav.textInputFull = false;
     widget.nav.removeListener(_onNavChanged);
-    _ctrl.dispose();
-    _searchFocus.dispose();
     _resultsScrollCtrl.dispose();
     super.dispose();
+  }
+
+  // ── Keyboard mode ────────────────────────────────────────────────────────
+
+  void _enterKeyboardMode() {
+    setState(() => _keyboardOpen = true);
+    widget.nav.textInputActive = true;
+    widget.nav.textInputFull = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _keyboardKey.currentState?.requestFocus();
+    });
+  }
+
+  void _exitKeyboardMode() {
+    setState(() => _keyboardOpen = false);
+    widget.nav.textInputActive = false;
+    widget.nav.textInputFull = false;
+  }
+
+  void _onQueryChanged(String text) {
+    setState(() => _query = text);
+    ref.read(searchProvider.notifier).search(text);
+  }
+
+  void _clearSearch() {
+    setState(() => _query = '');
+    ref.read(searchProvider.notifier).clear();
+    _enterKeyboardMode();
   }
 
   void _selectCat(String cat) {
@@ -57,12 +89,22 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     ref.read(searchProvider.notifier).setSite(_catSites[cat]!);
   }
 
-  void _onSearchFocusChange() {
-    widget.nav.textInputActive = _searchFocus.hasFocus;
-  }
+  // ── Nav listener ─────────────────────────────────────────────────────────
 
   void _onNavChanged() {
     if (!mounted) return;
+
+    // Auto-open keyboard when user navigates RIGHT from sidebar to search content.
+    final sidebarFocused = widget.nav.sidebarFocused;
+    final sidebarJustLeft = _prevSidebarFocused && !sidebarFocused;
+    _prevSidebarFocused = sidebarFocused;
+    if (sidebarJustLeft && widget.nav.screen == NavScreen.search && !_keyboardOpen) {
+      _enterKeyboardMode();
+      return;
+    }
+
+    // Scroll results when navigating (keyboard closed only)
+    if (_keyboardOpen) return;
     final row = widget.nav.contentRow;
     if (row < _kbBase) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -77,8 +119,23 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     });
   }
 
+  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final newCols = TvPosterGrid.calcCols(constraints.maxWidth);
+      if (newCols != _cols) {
+        _cols = newCols;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() {});
+        });
+      }
+      return _buildBody(context);
+    });
+  }
+
+  Widget _buildBody(BuildContext context) {
     final search = ref.watch(searchProvider);
     final results = search.results;
 
@@ -87,17 +144,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       resRows.add(results.sublist(i, (i + _cols).clamp(0, results.length)));
     }
 
+    // Register nav for when keyboard is closed
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       widget.nav.registerNav(
-        [
-          1,                                   // row 0: search bar
-          _cats.length,                        // row 1: category tabs
-          ...resRows.map((r) => r.length),     // rows 2+: result grid
-        ],
+        [1, _cats.length, ...resRows.map((r) => r.length)],
         (row, col) {
           if (row == 0) {
-            _searchFocus.requestFocus();       // open native keyboard
+            _enterKeyboardMode();
           } else if (row == 1) {
             _selectCat(_cats[col]);
           } else {
@@ -110,75 +164,67 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       );
     });
 
-    return ListView(
-      controller: _resultsScrollCtrl,
-      padding: const EdgeInsets.only(bottom: 80),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Search bar ───────────────────────────────────────────────────────
-        // ── Search bar (nav row 0) ───────────────────────────────────────
+        // ── Search bar ────────────────────────────────────────────────────────
         Padding(
-          padding: const EdgeInsets.fromLTRB(44, 28, 44, 0),
+          padding: const EdgeInsets.fromLTRB(44, 22, 44, 0),
           child: ListenableBuilder(
             listenable: widget.nav,
             builder: (_, _) {
-              final navFocused = widget.nav.isItemFocused(0, 0);
+              final navFocused =
+                  !_keyboardOpen && widget.nav.isItemFocused(0, 0);
+              final highlighted = _keyboardOpen || navFocused;
               return GestureDetector(
-                onTap: _searchFocus.requestFocus,
-                child: TextField(
-                  controller: _ctrl,
-                  focusNode: _searchFocus,
-                  style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w600,
-                      color: Rs.text),
-                  cursorColor: Rs.accent,
-                  cursorWidth: 2.5,
-                  onChanged: (v) =>
-                      ref.read(searchProvider.notifier).search(v),
-                  textInputAction: TextInputAction.search,
-                  onSubmitted: (_) => _searchFocus.unfocus(),
-                  decoration: InputDecoration(
-                    hintText: 'Titel suchen … (Enter zum Tippen)',
-                    hintStyle: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w500,
-                        color: Rs.muted2),
-                    prefixIcon: const Padding(
-                      padding: EdgeInsets.only(left: 4),
-                      child: Icon(Icons.search_rounded,
-                          color: Rs.accent, size: 24),
+                onTap: _enterKeyboardMode,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Rs.panel2,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: highlighted ? Rs.accent : Rs.line,
+                      width: highlighted ? 2 : 1,
                     ),
-                    suffixIcon: _ctrl.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.close_rounded,
-                                color: Rs.muted, size: 20),
-                            onPressed: () {
-                              _ctrl.clear();
-                              ref.read(searchProvider.notifier).clear();
-                            },
-                          )
+                    boxShadow: highlighted
+                        ? [
+                            BoxShadow(
+                              color: Rs.accent.withValues(alpha: 0.22),
+                              blurRadius: 14,
+                            )
+                          ]
                         : null,
-                    filled: true,
-                    fillColor: Rs.panel2,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: Rs.line),
-                    ),
-                    // Nav D-pad focus: orange glow border
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide(
-                        color: navFocused ? Rs.accent : Rs.line,
-                        width: navFocused ? 2 : 1,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.search_rounded,
+                          color: highlighted ? Rs.accent : Rs.muted, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _query.isEmpty ? 'Titel suchen …' : _query,
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: _query.isEmpty ? Rs.muted2 : Rs.text,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide:
-                          const BorderSide(color: Rs.accent, width: 2),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 20),
+                      if (_query.isNotEmpty)
+                        GestureDetector(
+                          onTap: _clearSearch,
+                          child: const Padding(
+                            padding: EdgeInsets.only(left: 8),
+                            child: Icon(Icons.close_rounded,
+                                color: Rs.muted, size: 18),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               );
@@ -186,167 +232,188 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           ),
         ),
 
-        const SizedBox(height: 16),
-
-        // ── Category tabs ────────────────────────────────────────────────────
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 44),
-          child: ListenableBuilder(
-            listenable: widget.nav,
-            builder: (_, _) => Row(
-              children: List.generate(_cats.length, (i) {
-                final isFoc = widget.nav.isItemFocused(1, i);
-                final isOn = _cats[i] == _cat;
-                return Padding(
-                  padding: EdgeInsets.only(
-                      right: i < _cats.length - 1 ? 10 : 0),
-                  child: GestureDetector(
-                    onTap: () => _selectCat(_cats[i]),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 140),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: isOn ? Colors.white : Rs.panel2,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: isFoc ? Rs.accent : Rs.line,
-                          width: isFoc ? 2 : 1,
+        // ── Inline keyboard ────────────────────────────────────────────────────
+        if (_keyboardOpen) ...[
+          const SizedBox(height: 8),
+          TvKeyboardInline(
+            key: _keyboardKey,
+            initialText: _query,
+            onChanged: _onQueryChanged,
+            onExitKeyboard: _exitKeyboardMode,
+          ),
+        ] else ...[
+          // ── Category tabs (only when keyboard is closed) ────────────────────
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 44),
+            child: ListenableBuilder(
+              listenable: widget.nav,
+              builder: (_, _) => Row(
+                children: List.generate(_cats.length, (i) {
+                  final isFoc = widget.nav.isItemFocused(1, i);
+                  final isOn = _cats[i] == _cat;
+                  return Padding(
+                    padding:
+                        EdgeInsets.only(right: i < _cats.length - 1 ? 10 : 0),
+                    child: GestureDetector(
+                      onTap: () => _selectCat(_cats[i]),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 140),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: isOn ? Colors.white : Rs.panel2,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: isFoc ? Rs.accent : Rs.line,
+                            width: isFoc ? 2 : 1,
+                          ),
+                          boxShadow: isFoc
+                              ? [
+                                  BoxShadow(
+                                    color: Rs.accent.withValues(alpha: 0.35),
+                                    blurRadius: 14,
+                                  )
+                                ]
+                              : null,
                         ),
-                        boxShadow: isFoc
-                            ? [
-                                BoxShadow(
-                                  color: Rs.accent.withValues(alpha: 0.35),
-                                  blurRadius: 14,
-                                )
-                              ]
-                            : null,
-                      ),
-                      child: Text(
-                        _cats[i],
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color:
-                              isOn ? const Color(0xFF111111) : Rs.muted,
+                        child: Text(
+                          _cats[i],
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: isOn ? const Color(0xFF111111) : Rs.muted,
+                          ),
                         ),
                       ),
                     ),
+                  );
+                }),
+              ),
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 10),
+
+        // ── Results ────────────────────────────────────────────────────────────
+        Expanded(
+          child: ListView(
+            controller: _resultsScrollCtrl,
+            padding: const EdgeInsets.only(bottom: 80),
+            children: [
+              // Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(44, 0, 44, 10),
+                child: Row(
+                  children: [
+                    Text(
+                      _query.isNotEmpty ? 'Ergebnisse' : 'Beliebte Titel',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: Rs.text,
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    if (search.loading)
+                      const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                              color: Rs.accent, strokeWidth: 2))
+                    else if (results.isNotEmpty)
+                      Text('${results.length} Titel',
+                          style: const TextStyle(
+                              fontSize: 13, color: Rs.muted)),
+                  ],
+                ),
+              ),
+
+              // Empty states
+              if (!search.loading && results.isEmpty && _query.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 40),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        const Icon(Icons.search_off_rounded,
+                            color: Rs.muted2, size: 44),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Keine Treffer für „$_query"',
+                          style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: Rs.muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              if (!search.loading && results.isEmpty && _query.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 40),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Icon(Icons.keyboard_rounded,
+                            color: Rs.muted2.withValues(alpha: 0.5), size: 44),
+                        const SizedBox(height: 12),
+                        const Text('Tippe mit der Tastatur einen Titel ein',
+                            style:
+                                TextStyle(fontSize: 13, color: Rs.muted2)),
+                      ],
+                    ),
+                  ),
+                ),
+
+              // Result grid
+              ...List.generate(resRows.length, (ri) {
+                final navRow = _kbBase + ri;
+                return Padding(
+                  key: _resultRowKeys.putIfAbsent(navRow, GlobalKey.new),
+                  padding: const EdgeInsets.fromLTRB(44, 0, 44, 14),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ...List.generate(
+                        resRows[ri].length,
+                        (ci) => Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                                right: ci < resRows[ri].length - 1 ? 14 : 0),
+                            child: AspectRatio(
+                              aspectRatio: 2 / 3,
+                              child: ListenableBuilder(
+                                listenable: widget.nav,
+                                builder: (_, _) => RsPosterCard(
+                                  item: resRows[ri][ci],
+                                  focused: !_keyboardOpen &&
+                                      widget.nav
+                                          .isItemFocused(navRow, ci),
+                                  inGrid: true,
+                                  onTap: () =>
+                                      widget.onSelect(resRows[ri][ci]),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      ...List.generate(
+                        _cols - resRows[ri].length,
+                        (_) => const Expanded(child: SizedBox()),
+                      ),
+                    ],
                   ),
                 );
               }),
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 24),
-
-        // ── Results header ───────────────────────────────────────────────────
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 44),
-          child: Row(
-            children: [
-              Text(
-                _ctrl.text.isNotEmpty ? 'Ergebnisse' : 'Beliebte Titel',
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: Rs.text,
-                  letterSpacing: -0.4,
-                ),
-              ),
-              const SizedBox(width: 12),
-              if (search.loading)
-                const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                        color: Rs.accent, strokeWidth: 2))
-              else if (results.isNotEmpty)
-                Text('${results.length} Titel',
-                    style:
-                        const TextStyle(fontSize: 15, color: Rs.muted)),
             ],
           ),
         ),
-
-        const SizedBox(height: 16),
-
-        // ── Empty / idle states ──────────────────────────────────────────────
-        if (!search.loading && results.isEmpty && _ctrl.text.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 56),
-            child: Center(
-              child: Column(
-                children: [
-                  const Icon(Icons.search_off_rounded,
-                      color: Rs.muted2, size: 52),
-                  const SizedBox(height: 14),
-                  Text(
-                    'Keine Treffer für „${_ctrl.text}"',
-                    style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: Rs.muted),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-        if (!search.loading && results.isEmpty && _ctrl.text.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 56),
-            child: Center(
-              child: Column(
-                children: [
-                  Icon(Icons.keyboard_rounded,
-                      color: Rs.muted2.withValues(alpha: 0.5), size: 56),
-                  const SizedBox(height: 14),
-                  const Text('Tippe einen Titel ein',
-                      style: TextStyle(fontSize: 16, color: Rs.muted2)),
-                  const SizedBox(height: 6),
-                  const Text('Drücke Enter um die Tastatur zu öffnen',
-                      style: TextStyle(fontSize: 13, color: Rs.muted2)),
-                ],
-              ),
-            ),
-          ),
-
-        // ── Result grid ──────────────────────────────────────────────────────
-        ...List.generate(resRows.length, (ri) {
-          final navRow = _kbBase + ri;
-          return Padding(
-            key: _resultRowKeys.putIfAbsent(navRow, GlobalKey.new),
-            padding: const EdgeInsets.fromLTRB(44, 0, 44, 20),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ...List.generate(resRows[ri].length, (ci) => Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.only(
-                        right: ci < resRows[ri].length - 1 ? 14 : 0),
-                    child: AspectRatio(
-                      aspectRatio: 2 / 3,
-                      child: ListenableBuilder(
-                        listenable: widget.nav,
-                        builder: (_, _) => RsPosterCard(
-                          item: resRows[ri][ci],
-                          focused: widget.nav.isItemFocused(navRow, ci),
-                          inGrid: true,
-                          onTap: () => widget.onSelect(resRows[ri][ci]),
-                        ),
-                      ),
-                    ),
-                  ),
-                )),
-                ...List.generate(
-                    _cols - resRows[ri].length,
-                    (_) => const Expanded(child: SizedBox())),
-              ],
-            ),
-          );
-        }),
       ],
     );
   }

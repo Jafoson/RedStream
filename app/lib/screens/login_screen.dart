@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/api_service.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
-import '../utils/tv_keyboard.dart';
+import '../widgets/tv_keyboard_dialog.dart';
 import 'home_screen.dart';
 import 'profile_screen.dart';
 
@@ -19,40 +19,38 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final _hostCtrl = TextEditingController();
-  final _userCtrl = TextEditingController();
-  final _passCtrl = TextEditingController();
+  String _host = '';
+  String _username = '';
+  String _password = '';
   final _hostFocus = FocusNode();
   final _userFocus = FocusNode();
   final _passFocus = FocusNode();
+  final _btnFocus = FocusNode();
   bool _loading = false;
   String? _error;
-  bool _obscure = true;
 
   @override
   void initState() {
     super.initState();
-    _hostCtrl.text = ref.read(serverUrlProvider);
-    _hostFocus.showKeyboardOnFocus();
-    _userFocus.showKeyboardOnFocus();
-    _passFocus.showKeyboardOnFocus();
+    _host = ref.read(serverUrlProvider);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _hostFocus.requestFocus();
+    });
   }
 
   @override
   void dispose() {
-    _hostCtrl.dispose();
-    _userCtrl.dispose();
-    _passCtrl.dispose();
     _hostFocus.dispose();
     _userFocus.dispose();
     _passFocus.dispose();
+    _btnFocus.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
-    final host = _hostCtrl.text.trim();
-    final username = _userCtrl.text.trim();
-    final password = _passCtrl.text;
+    final host = _host.trim();
+    final username = _username.trim();
+    final password = _password;
     if (host.isEmpty) {
       setState(() => _error = 'Bitte Server-URL eingeben.');
       return;
@@ -61,7 +59,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       setState(() => _error = 'Bitte Benutzername und Passwort eingeben.');
       return;
     }
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       await ref.read(serverUrlProvider.notifier).setUrl(host);
       final serverUrl = ref.read(serverUrlProvider);
@@ -78,7 +79,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final hasProfile = ref.read(activeProfileIdProvider) != null;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => hasProfile ? const HomeScreen() : const ProfileScreen(),
+          builder: (_) =>
+              hasProfile ? const HomeScreen() : const ProfileScreen(),
         ),
       );
     } on DioException catch (e) {
@@ -95,31 +97,51 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Rs.bg,
-      body: Center(
-        child: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Logo
-              Row(
-                children: [
-                  Image.asset('assets/logo.png', width: 44, height: 44),
-                  const SizedBox(width: 14),
-                  RichText(
-                    text: const TextSpan(children: [
-                      TextSpan(text: 'Red', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: Rs.text, letterSpacing: -0.5)),
-                      TextSpan(text: 'Stream', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: Rs.accent, letterSpacing: -0.5)),
-                    ]),
+      body: Stack(
+        children: [
+          // RedStream label — top right
+          Positioned(
+            top: 28,
+            right: 32,
+            child: RichText(
+              text: const TextSpan(children: [
+                TextSpan(
+                    text: 'Red',
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Rs.text,
+                        letterSpacing: -0.3)),
+                TextSpan(
+                    text: 'Stream',
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Rs.accent,
+                        letterSpacing: -0.3)),
+              ]),
+            ),
+          ),
+          Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(vertical: 32),
+              child: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: Text(
+                      widget.isSetup ? 'Admin-Konto erstellen' : 'Anmelden',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w800,
+                          color: Rs.text),
+                    ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 36),
-              Text(
-                widget.isSetup ? 'Admin-Konto erstellen' : 'Anmelden',
-                style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: Rs.text),
-              ),
               const SizedBox(height: 8),
               Text(
                 widget.isSetup
@@ -128,34 +150,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 style: const TextStyle(fontSize: 15, color: Rs.muted),
               ),
               const SizedBox(height: 32),
-              // Server URL field
+
+              // ── Server URL ───────────────────────────────────────────────
               _FieldLabel('Server-URL'),
               const SizedBox(height: 8),
               Focus(
-                onKeyEvent: (node, event) {
-                  if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                onKeyEvent: (_, event) {
+                  if (event is KeyDownEvent &&
+                      event.logicalKey == LogicalKeyboardKey.arrowDown) {
                     _userFocus.requestFocus();
                     return KeyEventResult.handled;
                   }
                   return KeyEventResult.ignored;
                 },
-                child: TextField(
-                  controller: _hostCtrl,
+                child: TvTextInput(
+                  label: 'http://192.168.1.x:8080',
+                  value: _host,
                   focusNode: _hostFocus,
-                  autofocus: true,
-                  keyboardType: TextInputType.url,
-                  textInputAction: TextInputAction.next,
-                  style: const TextStyle(color: Rs.text, fontSize: 17),
-                  decoration: _inputDeco('http://192.168.1.x:8080'),
-                  onSubmitted: (_) => _userFocus.requestFocus(),
+                  onChanged: (v) => setState(() => _host = v),
                 ),
               ),
               const SizedBox(height: 20),
-              // Username field
+
+              // ── Username ─────────────────────────────────────────────────
               _FieldLabel('Benutzername'),
               const SizedBox(height: 8),
               Focus(
-                onKeyEvent: (node, event) {
+                onKeyEvent: (_, event) {
                   if (event is KeyDownEvent) {
                     if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
                       _passFocus.requestFocus();
@@ -168,98 +189,117 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   }
                   return KeyEventResult.ignored;
                 },
-                child: TextField(
-                  controller: _userCtrl,
+                child: TvTextInput(
+                  label: 'Benutzername eingeben',
+                  value: _username,
                   focusNode: _userFocus,
-                  textInputAction: TextInputAction.next,
-                  style: const TextStyle(color: Rs.text, fontSize: 17),
-                  decoration: _inputDeco('Benutzername eingeben'),
-                  onSubmitted: (_) => _passFocus.requestFocus(),
+                  onChanged: (v) => setState(() => _username = v),
                 ),
               ),
               const SizedBox(height: 20),
-              // Password field
+
+              // ── Password ─────────────────────────────────────────────────
               _FieldLabel('Passwort'),
               const SizedBox(height: 8),
               Focus(
-                onKeyEvent: (node, event) {
-                  if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowUp) {
-                    _userFocus.requestFocus();
-                    return KeyEventResult.handled;
+                onKeyEvent: (_, event) {
+                  if (event is KeyDownEvent) {
+                    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                      _userFocus.requestFocus();
+                      return KeyEventResult.handled;
+                    }
+                    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                      _btnFocus.requestFocus();
+                      return KeyEventResult.handled;
+                    }
                   }
                   return KeyEventResult.ignored;
                 },
-                child: TextField(
-                  controller: _passCtrl,
+                child: TvTextInput(
+                  label: 'Passwort eingeben',
+                  value: _password,
+                  obscureText: true,
                   focusNode: _passFocus,
-                  obscureText: _obscure,
-                  textInputAction: TextInputAction.done,
-                  style: const TextStyle(color: Rs.text, fontSize: 17),
-                  decoration: _inputDeco('Passwort eingeben').copyWith(
-                    suffixIcon: IconButton(
-                      icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility, color: Rs.muted),
-                      onPressed: () => setState(() => _obscure = !_obscure),
-                    ),
-                  ),
-                  onSubmitted: (_) => _submit(),
+                  onChanged: (v) => setState(() => _password = v),
                 ),
               ),
+
               if (_error != null) ...[
                 const SizedBox(height: 16),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     color: Colors.red.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.red.withValues(alpha: 0.4)),
+                    border: Border.all(
+                        color: Colors.red.withValues(alpha: 0.4)),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.error_outline, color: Colors.red, size: 18),
+                      const Icon(Icons.error_outline,
+                          color: Colors.red, size: 18),
                       const SizedBox(width: 10),
-                      Expanded(child: Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 14))),
+                      Expanded(
+                          child: Text(_error!,
+                              style: const TextStyle(
+                                  color: Colors.red, fontSize: 14))),
                     ],
                   ),
                 ),
               ],
               const SizedBox(height: 28),
-              // Submit button
-              _LoginButton(
-                label: widget.isSetup ? 'Konto erstellen' : 'Anmelden',
-                loading: _loading,
-                onPressed: _submit,
+
+              // ── Submit button ────────────────────────────────────────────
+              Focus(
+                onKeyEvent: (_, event) {
+                  if (event is KeyDownEvent &&
+                      event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                    _passFocus.requestFocus();
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: _LoginButton(
+                  label: widget.isSetup ? 'Konto erstellen' : 'Anmelden',
+                  loading: _loading,
+                  focusNode: _btnFocus,
+                  onPressed: _submit,
+                ),
               ),
             ],
           ),
+          ),
         ),
+        ),
+        ],
       ),
     );
   }
-
-  InputDecoration _inputDeco(String hint) => InputDecoration(
-    hintText: hint,
-    hintStyle: const TextStyle(color: Rs.muted2),
-    filled: true,
-    fillColor: Rs.panel,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Rs.line)),
-    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Rs.line)),
-    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Rs.accent, width: 2)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-  );
 }
 
 class _FieldLabel extends StatelessWidget {
   final String text;
   const _FieldLabel(this.text);
   @override
-  Widget build(BuildContext context) => Text(text, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Rs.muted, letterSpacing: 0.5));
+  Widget build(BuildContext context) => Text(text,
+      style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: Rs.muted,
+          letterSpacing: 0.5));
 }
 
 class _LoginButton extends StatefulWidget {
   final String label;
   final bool loading;
   final VoidCallback onPressed;
-  const _LoginButton({required this.label, required this.loading, required this.onPressed});
+  final FocusNode? focusNode;
+  const _LoginButton(
+      {required this.label,
+      required this.loading,
+      required this.onPressed,
+      this.focusNode});
 
   @override
   State<_LoginButton> createState() => _LoginButtonState();
@@ -271,12 +311,13 @@ class _LoginButtonState extends State<_LoginButton> {
   @override
   Widget build(BuildContext context) {
     return Focus(
+      focusNode: widget.focusNode,
       onFocusChange: (f) => setState(() => _focused = f),
       onKeyEvent: (_, e) {
         if (e is KeyDownEvent &&
             (e.logicalKey == LogicalKeyboardKey.select ||
-             e.logicalKey == LogicalKeyboardKey.enter ||
-             e.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+                e.logicalKey == LogicalKeyboardKey.enter ||
+                e.logicalKey == LogicalKeyboardKey.gameButtonA)) {
           widget.onPressed();
           return KeyEventResult.handled;
         }
@@ -291,12 +332,25 @@ class _LoginButtonState extends State<_LoginButton> {
           decoration: BoxDecoration(
             color: _focused ? Rs.accentLight : Rs.accent,
             borderRadius: BorderRadius.circular(14),
-            boxShadow: [BoxShadow(color: Rs.accent.withValues(alpha: 0.45), blurRadius: 24, offset: const Offset(0, 8))],
+            boxShadow: [
+              BoxShadow(
+                  color: Rs.accent.withValues(alpha: 0.45),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8))
+            ],
           ),
           child: Center(
             child: widget.loading
-                ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : Text(widget.label, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white))
+                : Text(widget.label,
+                    style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white)),
           ),
         ),
       ),

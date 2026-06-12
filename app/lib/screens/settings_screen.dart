@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../navigation/app_nav.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
-import '../utils/tv_keyboard.dart';
+import '../widgets/tv_keyboard_dialog.dart';
 import 'setup_screen.dart';
 
 // Nav rows: 0 = URL field, 1 = Save button, 2 = Reconfigure button
@@ -17,34 +17,25 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  late TextEditingController _urlController;
+  late String _url;
   final _urlFocus = FocusNode(skipTraversal: true);
   bool _saved = false;
 
   @override
   void initState() {
     super.initState();
-    _urlController = TextEditingController(text: ref.read(serverUrlProvider));
-    _urlFocus.addListener(_onUrlFocusChange);
-    _urlFocus.showKeyboardOnFocus();
+    _url = ref.read(serverUrlProvider);
   }
 
   @override
   void dispose() {
     widget.nav.textInputActive = false;
-    _urlFocus.removeListener(_onUrlFocusChange);
     _urlFocus.dispose();
-    _urlController.dispose();
     super.dispose();
   }
 
-  void _onUrlFocusChange() {
-    widget.nav.textInputActive = _urlFocus.hasFocus;
-  }
-
   Future<void> _saveUrl() async {
-    _urlFocus.unfocus();
-    await ref.read(serverUrlProvider.notifier).setUrl(_urlController.text);
+    await ref.read(serverUrlProvider.notifier).setUrl(_url);
     if (mounted) setState(() => _saved = true);
     await Future.delayed(const Duration(seconds: 2));
     if (mounted) setState(() => _saved = false);
@@ -91,46 +82,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   if (currentUrl.isNotEmpty)
                     Text(currentUrl, style: tt.bodyMedium),
                   const SizedBox(height: 14),
-                  // URL text field (nav row 0)
-                  ListenableBuilder(
-                    listenable: widget.nav,
-                    builder: (_, _) {
-                      final navFocused = widget.nav.isItemFocused(0, 0);
-                      return TextField(
-                        controller: _urlController,
-                        focusNode: _urlFocus,
-                        style: tt.bodyLarge,
-                        onSubmitted: (_) => _saveUrl(),
-                        decoration: InputDecoration(
-                          hintText: 'http://192.168.1.100:8080',
-                          prefixIcon: Icon(
-                            Icons.dns_outlined,
-                            color: navFocused ? Rs.accent : Rs.muted,
-                          ),
-                          isDense: true,
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide(
-                              color: navFocused ? Rs.accent : Rs.line2,
-                              width: navFocused ? 2 : 1,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide:
-                                const BorderSide(color: Rs.accent, width: 2),
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: const BorderSide(color: Rs.line2),
-                          ),
-                          filled: true,
-                          fillColor: Rs.panel2,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 14),
-                        ),
-                      );
-                    },
+                  // URL field (nav row 0)
+                  TvTextInput(
+                    label: 'http://192.168.1.100:8080',
+                    value: _url,
+                    focusNode: _urlFocus,
+                    onChanged: (v) => setState(() => _url = v),
                   ),
                   const SizedBox(height: 12),
                   // Save button (nav row 1)

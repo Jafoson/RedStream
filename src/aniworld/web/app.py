@@ -2483,8 +2483,10 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             "auth.setup",
             "auth.oidc_login",
             "auth.oidc_callback",
-            "api_auth_check",   # public: lets Flutter detect auth status
-            "api_proxy_image",  # public: poster images are not sensitive
+            "api_auth_check",        # public: lets Flutter detect auth status
+            "api_proxy_image",       # public: poster images are not sensitive
+            "api_episode_preview",   # public: episode thumbnail images, not sensitive
+            "api_thumbnails_sprite", # public: seek-bar sprite thumbnails, not sensitive
         }
         for endpoint, view_func in list(app.view_functions.items()):
             if endpoint not in _exempt:

@@ -54,6 +54,11 @@ class AppNavController extends ChangeNotifier {
   /// has focus on the search screen).
   bool textInputActive = false;
 
+  /// When true AND textInputActive is also true, ALL key events (including
+  /// UP/DOWN) pass through unchanged — used for the inline TV keyboard so
+  /// arrow keys navigate between keyboard rows instead of exiting text mode.
+  bool textInputFull = false;
+
   void attach() {
     if (_attached) { return; }
     _attached = true;
@@ -72,7 +77,10 @@ class AppNavController extends ChangeNotifier {
     final key = event.logicalKey;
 
     if (textInputActive) {
-      // Up/Down escape from the text field back into D-pad navigation.
+      // Full pass-through mode: inline TV keyboard handles ALL keys itself
+      // (including UP/DOWN for row navigation). Don't intercept anything.
+      if (textInputFull) return false;
+      // Normal text-field mode: UP/Down escape back to D-pad navigation.
       if (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.arrowDown) {
         FocusManager.instance.primaryFocus?.unfocus();
         textInputActive = false;

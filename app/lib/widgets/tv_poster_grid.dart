@@ -42,6 +42,18 @@ class TvPosterGrid extends StatefulWidget {
     this.itemBuilder,
   });
 
+  /// Calculates how many columns fit in [availableWidth].
+  ///
+  /// Targets a card width of [targetCardW] px. The grid uses 44 px horizontal
+  /// padding on each side, so [availableWidth] should be the full container
+  /// width (sidebar already subtracted by the layout).
+  static int calcCols(double availableWidth, {double targetCardW = 155.0}) {
+    const gap = 14.0;
+    const hPad = 88.0; // 44 px left + 44 px right
+    final inner = (availableWidth - hPad).clamp(0.0, double.infinity);
+    return (inner / (targetCardW + gap)).round().clamp(3, 9);
+  }
+
   /// Returns the row-lengths list to pass to [AppNavController.registerNav]
   /// for the grid portion only (without rows above, like sort tabs).
   static List<int> rowLengthsFor(List<SeriesResult> items, int cols) {

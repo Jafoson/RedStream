@@ -12,83 +12,111 @@ class RsSidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: nav,
-      builder: (context, _) => Container(
-        width: Rs.sidebarW,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xEB111315), Color(0xEB0B0C0E)],
+      builder: (context, _) {
+        final expanded = nav.sidebarFocused;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+          width: expanded ? Rs.sidebarW : Rs.sidebarCollapsed,
+          height: double.infinity,
+          clipBehavior: Clip.hardEdge,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xEB111315), Color(0xEB0B0C0E)],
+            ),
+            border: Border(right: BorderSide(color: Rs.line)),
           ),
-          border: Border(right: BorderSide(color: Rs.line)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 34),
-            _Brand(),
-            const SizedBox(height: 30),
-            _NavGroup(nav: nav, items: _menuItems),
-            _SectionLabel('BIBLIOTHEK'),
-            _NavGroup(nav: nav, items: _libItems),
-            const Spacer(),
-            _NavGroup(nav: nav, items: _genItems),
-            _ProfileSwitchTile(nav: nav),
-            const SizedBox(height: 26),
-          ],
-        ),
-      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 24),
+              _Brand(expanded: expanded),
+              const SizedBox(height: 20),
+              Expanded(
+                child: SingleChildScrollView(
+                  physics: const NeverScrollableScrollPhysics(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _NavGroup(nav: nav, items: _menuItems, expanded: expanded),
+                      _SectionLabel(expanded: expanded),
+                      _NavGroup(nav: nav, items: _libItems, expanded: expanded),
+                    ],
+                  ),
+                ),
+              ),
+              _NavGroup(nav: nav, items: _genItems, expanded: expanded),
+              _ProfileSwitchTile(nav: nav, expanded: expanded),
+              const SizedBox(height: 18),
+            ],
+          ),
+        );
+      },
     );
   }
 }
 
+// ── Brand ────────────────────────────────────────────────────────────────────
+
 class _Brand extends StatelessWidget {
+  final bool expanded;
+  const _Brand({required this.expanded});
+
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(30, 0, 18, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 7),
       child: Row(
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
               color: Rs.accent,
-              borderRadius: BorderRadius.circular(13),
+              borderRadius: BorderRadius.circular(9),
               boxShadow: [
                 BoxShadow(
-                  color: Rs.accent.withValues(alpha: 0.5),
-                  blurRadius: 22,
-                  offset: const Offset(0, 6),
+                  color: Rs.accent.withValues(alpha: 0.45),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
                 ),
               ],
             ),
-            child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 23),
+            child: const Icon(Icons.play_arrow_rounded,
+                color: Colors.white, size: 17),
           ),
-          const SizedBox(width: 12),
-          RichText(
-            text: const TextSpan(
-              children: [
-                TextSpan(
-                  text: 'Red',
-                  style: TextStyle(
-                    fontSize: 23,
-                    fontWeight: FontWeight.w800,
-                    color: Rs.text,
-                    letterSpacing: -0.5,
-                  ),
+          // Flexible prevents layout overflow; opacity fades text
+          Flexible(
+            child: AnimatedOpacity(
+              opacity: expanded ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 120),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 10),
+                child: RichText(
+                  overflow: TextOverflow.clip,
+                  maxLines: 1,
+                  text: const TextSpan(children: [
+                    TextSpan(
+                      text: 'Red',
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: Rs.text,
+                          letterSpacing: -0.4),
+                    ),
+                    TextSpan(
+                      text: 'Stream',
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: Rs.accent,
+                          letterSpacing: -0.4),
+                    ),
+                  ]),
                 ),
-                TextSpan(
-                  text: 'Stream',
-                  style: TextStyle(
-                    fontSize: 23,
-                    fontWeight: FontWeight.w800,
-                    color: Rs.accent,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ],
@@ -97,36 +125,48 @@ class _Brand extends StatelessWidget {
   }
 }
 
+// ── Section label ─────────────────────────────────────────────────────────────
+
 class _SectionLabel extends StatelessWidget {
-  final String label;
-  const _SectionLabel(this.label);
+  final bool expanded;
+  const _SectionLabel({required this.expanded});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(34, 18, 16, 10),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 11,
-          letterSpacing: 2.0,
-          color: Rs.muted2,
-          fontWeight: FontWeight.w700,
+    return AnimatedOpacity(
+      opacity: expanded ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 120),
+      child: const Padding(
+        padding: EdgeInsets.fromLTRB(24, 14, 12, 8),
+        child: Text(
+          'BIBLIOTHEK',
+          style: TextStyle(
+            fontSize: 10,
+            letterSpacing: 1.8,
+            color: Rs.muted2,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
     );
   }
 }
 
+// ── Nav group / tile ──────────────────────────────────────────────────────────
+
 class _NavGroup extends StatelessWidget {
   final AppNavController nav;
   final List<_NavItem> items;
-  const _NavGroup({required this.nav, required this.items});
+  final bool expanded;
+  const _NavGroup(
+      {required this.nav, required this.items, required this.expanded});
 
   @override
   Widget build(BuildContext context) {
     return Column(
-      children: items.map((item) => _NavTile(nav: nav, item: item)).toList(),
+      children: items
+          .map((item) => _NavTile(nav: nav, item: item, expanded: expanded))
+          .toList(),
     );
   }
 }
@@ -156,9 +196,91 @@ const _genItems = [
   _NavItem(Icons.settings_rounded, 'Einstellungen', NavScreen.settings, 7),
 ];
 
+class _NavTile extends StatelessWidget {
+  final AppNavController nav;
+  final _NavItem item;
+  final bool expanded;
+  const _NavTile(
+      {required this.nav, required this.item, required this.expanded});
+
+  @override
+  Widget build(BuildContext context) {
+    final isFoc = nav.isSidebarFocused(item.index);
+    final isActive = nav.screen == item.screen;
+
+    final iconColor = isFoc
+        ? Colors.white
+        : isActive
+            ? Rs.accent
+            : Rs.muted;
+
+    return GestureDetector(
+      onTap: () => nav.switchScreen(item.screen),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOut,
+        margin: expanded
+            ? const EdgeInsets.symmetric(horizontal: 12, vertical: 1)
+            : const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        padding: expanded
+            ? EdgeInsets.fromLTRB(isFoc ? 16 : 12, 9, 12, 9)
+            : const EdgeInsets.symmetric(horizontal: 7, vertical: 9),
+        decoration: BoxDecoration(
+          color: isFoc
+              ? Rs.accent
+              : isActive
+                  ? Colors.white.withValues(alpha: 0.05)
+                  : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: isFoc
+              ? [
+                  BoxShadow(
+                    color: Rs.accent.withValues(alpha: 0.4),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
+                  )
+                ]
+              : null,
+        ),
+        child: Row(
+          children: [
+            Icon(item.icon, size: 17, color: iconColor),
+            Flexible(
+              child: AnimatedOpacity(
+                opacity: expanded ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 120),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 11),
+                  child: Text(
+                    item.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.clip,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: isFoc
+                          ? Colors.white
+                          : isActive
+                              ? Colors.white
+                              : Rs.muted,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Profile switch tile ───────────────────────────────────────────────────────
+
 class _ProfileSwitchTile extends StatelessWidget {
   final AppNavController nav;
-  const _ProfileSwitchTile({required this.nav});
+  final bool expanded;
+  const _ProfileSwitchTile({required this.nav, required this.expanded});
 
   static const _index = 8;
 
@@ -170,96 +292,52 @@ class _ProfileSwitchTile extends StatelessWidget {
       onTap: () async {
         nav.detach();
         await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const ProfileScreen(canPop: true)),
+          MaterialPageRoute(
+              builder: (_) => const ProfileScreen(canPop: true)),
         );
         nav.attach();
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         curve: Curves.easeOut,
-        margin: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
-        padding: EdgeInsets.fromLTRB(isFoc ? 20 : 16, 13, 16, 13),
+        margin: expanded
+            ? const EdgeInsets.symmetric(horizontal: 12, vertical: 1)
+            : const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        padding: expanded
+            ? EdgeInsets.fromLTRB(isFoc ? 16 : 12, 9, 12, 9)
+            : const EdgeInsets.symmetric(horizontal: 7, vertical: 9),
         decoration: BoxDecoration(
           color: isFoc ? Rs.accent : Colors.transparent,
-          borderRadius: BorderRadius.circular(13),
-          boxShadow: isFoc
-              ? [BoxShadow(color: Rs.accent.withValues(alpha: 0.45), blurRadius: 30, offset: const Offset(0, 10))]
-              : null,
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.switch_account_rounded, size: 22, color: isFoc ? Colors.white : Rs.muted),
-            const SizedBox(width: 15),
-            Expanded(
-              child: Text(
-                'Profil wechseln',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: isFoc ? Colors.white : Rs.muted,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _NavTile extends StatelessWidget {
-  final AppNavController nav;
-  final _NavItem item;
-  const _NavTile({required this.nav, required this.item});
-
-  @override
-  Widget build(BuildContext context) {
-    final isFoc = nav.isSidebarFocused(item.index);
-    final isActive = nav.screen == item.screen;
-
-    return GestureDetector(
-      onTap: () => nav.switchScreen(item.screen),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        curve: Curves.easeOut,
-        margin: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
-        padding: EdgeInsets.fromLTRB(isFoc ? 20 : 16, 13, 16, 13),
-        decoration: BoxDecoration(
-          color: isFoc
-              ? Rs.accent
-              : isActive
-                  ? Colors.white.withValues(alpha: 0.05)
-                  : Colors.transparent,
-          borderRadius: BorderRadius.circular(13),
+          borderRadius: BorderRadius.circular(10),
           boxShadow: isFoc
               ? [
                   BoxShadow(
-                    color: Rs.accent.withValues(alpha: 0.45),
-                    blurRadius: 30,
-                    offset: const Offset(0, 10),
-                  )
+                      color: Rs.accent.withValues(alpha: 0.4),
+                      blurRadius: 18,
+                      offset: const Offset(0, 6))
                 ]
               : null,
         ),
         child: Row(
           children: [
-            Icon(
-              item.icon,
-              size: 22,
-              color: isFoc
-                  ? Colors.white
-                  : isActive
-                      ? Rs.accent
-                      : Rs.muted,
-            ),
-            const SizedBox(width: 15),
-            Expanded(
-              child: Text(
-                item.label,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: isFoc ? Colors.white : isActive ? Colors.white : Rs.muted,
+            Icon(Icons.switch_account_rounded,
+                size: 17, color: isFoc ? Colors.white : Rs.muted),
+            Flexible(
+              child: AnimatedOpacity(
+                opacity: expanded ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 120),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 11),
+                  child: Text(
+                    'Profil wechseln',
+                    maxLines: 1,
+                    overflow: TextOverflow.clip,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: isFoc ? Colors.white : Rs.muted,
+                    ),
+                  ),
                 ),
               ),
             ),

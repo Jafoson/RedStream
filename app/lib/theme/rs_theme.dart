@@ -16,33 +16,34 @@ abstract final class Rs {
   static const gold = Color(0xFFE7B34A);
 
   // Radii
-  static const radius = 18.0;
-  static const radiusLg = 26.0;
-  static const radiusSm = 13.0;
+  static const radius = 14.0;
+  static const radiusLg = 20.0;
+  static const radiusSm = 10.0;
 
   // Layout constants
-  static const sidebarW = 248.0;
-  static const cardW = 200.0;
-  static const cardH = 290.0;
-  static const cwW = 310.0;
-  static const cwH = 185.0;
+  static const sidebarW = 192.0;
+  static const sidebarCollapsed = 52.0;
+  static const cardW = 175.0;
+  static const cardH = 254.0;
+  static const cwW = 270.0;
+  static const cwH = 158.0;
 
   static Color glow([double a = 0.45]) => accent.withValues(alpha: a);
 
   static ThemeData theme() {
     const tt = TextTheme(
       displayLarge: TextStyle(
-          fontSize: 46, fontWeight: FontWeight.w800, color: text, letterSpacing: -1.5),
+          fontSize: 38, fontWeight: FontWeight.w800, color: text, letterSpacing: -1.2),
       displayMedium: TextStyle(
-          fontSize: 36, fontWeight: FontWeight.w800, color: text, letterSpacing: -1.0),
+          fontSize: 28, fontWeight: FontWeight.w800, color: text, letterSpacing: -0.8),
       titleLarge: TextStyle(
-          fontSize: 24, fontWeight: FontWeight.w800, color: text, letterSpacing: -0.5),
-      titleMedium: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: text),
-      bodyLarge: TextStyle(fontSize: 17, color: Color(0xFFD7D8DA), height: 1.5),
-      bodyMedium: TextStyle(fontSize: 15, color: muted, fontWeight: FontWeight.w600),
-      labelLarge: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: text),
+          fontSize: 20, fontWeight: FontWeight.w800, color: text, letterSpacing: -0.4),
+      titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: text),
+      bodyLarge: TextStyle(fontSize: 15, color: Color(0xFFD7D8DA), height: 1.5),
+      bodyMedium: TextStyle(fontSize: 13, color: muted, fontWeight: FontWeight.w600),
+      labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: text),
       labelSmall: TextStyle(
-          fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.8, color: muted2),
+          fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.6, color: muted2),
     );
     return ThemeData(
       brightness: Brightness.dark,
@@ -59,7 +60,7 @@ abstract final class Rs {
         backgroundColor: bg,
         elevation: 0,
         titleTextStyle: TextStyle(
-            fontSize: 22, fontWeight: FontWeight.w800, color: text),
+            fontSize: 18, fontWeight: FontWeight.w800, color: text),
       ),
       splashColor: Colors.transparent,
       highlightColor: Colors.transparent,
