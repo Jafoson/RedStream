@@ -238,23 +238,23 @@ def fetch_popular_animes():
 
 
 def _fetch_series_homepage():
-    """Fetch the s.to popular series page, using a simple module-level cache."""
+    """Fetch the serienstream.to popular series page, using a simple module-level cache."""
     global _series_html_content
     if _series_html_content is not None:
         return _series_html_content
 
     try:
-        response = GLOBAL_SESSION.get("https://s.to/beliebte-serien")
+        response = GLOBAL_SESSION.get("https://serienstream.to/beliebte-serien")
         response.raise_for_status()
         _series_html_content = response.text
         return _series_html_content
     except Exception as e:
-        logger.error(f"Failed to fetch s.to popular series page: {e}")
+        logger.error(f"Failed to fetch serienstream.to popular series page: {e}")
         return None
 
 
 def _extract_series_cards(section_html):
-    """Extract series cards from an s.to HTML section.
+    """Extract series cards from a serienstream.to HTML section.
 
     Parses <a> tags linking to /serie/ paths and extracts title from the
     <img> alt attribute and poster from src/data-src. Deduplicates by slug.
@@ -283,7 +283,7 @@ def _extract_series_cards(section_html):
             continue
         seen_slugs.add(series_slug)
 
-        url = f"https://s.to/serie/{series_slug}"
+        url = f"https://serienstream.to/serie/{series_slug}"
 
         # --- Title: try img alt, then link title attr, then alt on any tag ---
         title = ""
@@ -325,7 +325,7 @@ def _extract_series_cards(section_html):
 
 
 def _find_series_section(full_html, heading_hints, fallback_index):
-    """Locate an s.to section and extract its series cards.
+    """Locate a serienstream.to section and extract its series cards.
 
     Tries to find the section by heading text patterns first (resilient to
     surrounding markup changes), then falls back to the Nth mb-5 div by
@@ -366,7 +366,7 @@ def _find_series_section(full_html, heading_hints, fallback_index):
 
 
 def fetch_new_series():
-    """Fetch the 'Neue Staffeln diese Woche' section from s.to.
+    """Fetch the 'Neue Staffeln diese Woche' section from serienstream.to.
 
     Returns a list of series dicts or None on error.
     """
@@ -381,7 +381,7 @@ def fetch_new_series():
 
 
 def fetch_popular_series():
-    """Fetch the 'Meistgesehen gerade' section from s.to.
+    """Fetch the 'Meistgesehen gerade' section from serienstream.to.
 
     Returns a list of series dicts or None on error.
     """
@@ -398,7 +398,7 @@ def fetch_popular_series():
 _all_animes_cache = None
 _all_series_cache = None
 
-# Known genres on s.to — display name → URL slug
+# Known genres on serienstream.to — display name → URL slug
 SERIES_GENRES = {
     "Abenteuer": "abenteuer",
     "Action": "action",
@@ -413,14 +413,14 @@ SERIES_GENRES = {
     "Thriller": "thriller",
 }
 
-_series_genre_slug_cache: dict[str, set] = {}  # display_name → set of s.to series slugs
+_series_genre_slug_cache: dict[str, set] = {}  # display_name → set of serienstream.to series slugs
 _series_genre_lock = threading.Lock()
 
 
 def fetch_series_genre_slugs(genre_name: str) -> set:
-    """Return the set of s.to series slugs that belong to genre_name.
+    """Return the set of serienstream.to series slugs that belong to genre_name.
 
-    Fetches all paginated genre pages from s.to and caches the result.
+    Fetches all paginated genre pages from serienstream.to and caches the result.
     """
     if genre_name in _series_genre_slug_cache:
         return _series_genre_slug_cache[genre_name]
@@ -433,9 +433,9 @@ def fetch_series_genre_slugs(genre_name: str) -> set:
     page = 1
     while True:
         url = (
-            f"https://s.to/genre/{url_slug}"
+            f"https://serienstream.to/genre/{url_slug}"
             if page == 1
-            else f"https://s.to/genre/{url_slug}?page={page}"
+            else f"https://serienstream.to/genre/{url_slug}?page={page}"
         )
         try:
             r = GLOBAL_SESSION.get(url, timeout=15)
@@ -457,7 +457,7 @@ def fetch_series_genre_slugs(genre_name: str) -> set:
 
 
 def prewarm_series_genres():
-    """Fetch all s.to genre pages in the background so filters are fast on first use."""
+    """Fetch all serienstream.to genre pages in the background so filters are fast on first use."""
     def _worker(genre_name):
         if genre_name not in _series_genre_slug_cache:
             fetch_series_genre_slugs(genre_name)
@@ -540,7 +540,7 @@ def fetch_all_animes():
 
 
 def fetch_all_series():
-    """Fetch the complete series list from s.to/serien, sorted alphabetically.
+    """Fetch the complete series list from serienstream.to/serien, sorted alphabetically.
 
     Returns a list of dicts with title, url, poster_url, or None on error.
     Caches the result in-memory for the lifetime of the process.
@@ -550,7 +550,7 @@ def fetch_all_series():
         return _all_series_cache
 
     try:
-        response = GLOBAL_SESSION.get("https://s.to/serien", timeout=30)
+        response = GLOBAL_SESSION.get("https://serienstream.to/serien", timeout=30)
         response.raise_for_status()
         html = response.text
     except Exception as e:
@@ -581,7 +581,7 @@ def fetch_all_series():
     for m in pattern.finditer(html):
         slug = m.group(1).strip().split("/")[0]
         title = html_module.unescape(m.group(2).strip())
-        url = f"https://s.to/serie/{slug}"
+        url = f"https://serienstream.to/serie/{slug}"
         if url not in seen and title:
             seen.add(url)
             results.append({
@@ -655,7 +655,7 @@ def _curses_menu(stdscr, options):
 
 def _normalize_s_to_link(link: str) -> str:
     """
-    Normalize s.to links to the canonical form used by our provider patterns:
+    Normalize serienstream.to links to the canonical form used by our provider patterns:
     - /serie/<slug>
     Also accepts /serie/stream/<slug> and converts it back.
     """
@@ -679,9 +679,9 @@ def _normalize_s_to_link(link: str) -> str:
 
 
 def query_s_to(keyword):
-    """Search s.to for the given keyword and return a list of matching series with their URLs."""
+    """Search serienstream.to for the given keyword and return a list of matching series with their URLs."""
     # Use query params to ensure proper URL encoding (spaces, umlauts, etc.)
-    url = "https://s.to/api/search/suggest"
+    url = "https://serienstream.to/api/search/suggest"
     response = GLOBAL_SESSION.get(url, params={"term": keyword})
 
     data = response.json()
@@ -706,9 +706,9 @@ def search(is_aniworld=None):
     if is_aniworld is None:
         is_aniworld = os.getenv("ANIWORLD_USE_STO_SEARCH", "0") != "1"
 
-    # print(f"Using {'Aniworld' if is_aniworld else 's.to'} for search results.\n")
+    # print(f"Using {'Aniworld' if is_aniworld else 'serienstream.to'} for search results.\n")
 
-    base_url = "https://aniworld.to" if is_aniworld else "https://s.to"
+    base_url = "https://aniworld.to" if is_aniworld else "https://serienstream.to"
     query_fn = query if is_aniworld else query_s_to
 
     if use_random:
