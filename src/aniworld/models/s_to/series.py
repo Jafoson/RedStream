@@ -1,8 +1,10 @@
 import re
+from html import unescape
 from urllib.parse import urljoin, urlparse
 
-from ...config import GLOBAL_SESSION, SERIENSTREAM_SERIES_PATTERN, logger
+from ...config import SERIENSTREAM_SERIES_PATTERN, logger
 from ..common import clean_title
+from .http import sto_get
 
 
 class SerienstreamSeries:
@@ -165,7 +167,7 @@ class SerienstreamSeries:
     def _html(self):
         if self.__html is None:
             logger.debug(f"fetching ({self.url})...")
-            resp = GLOBAL_SESSION.get(self.url)
+            resp = sto_get(self.url)
             self.__html = resp.text
         return self.__html
 
@@ -184,12 +186,12 @@ class SerienstreamSeries:
         match = pattern.search(self._html)
 
         if match:
-            title = match.group(1).strip()
-            return title
+            # The page stores the title HTML escaped, so "It's" arrives as
+            # "It&#039;s" and would end up in the folder and file names.
+            return unescape(match.group(1).strip())
 
         return None
 
-    # TODO: description is clamped in html and loaded via js
     def __extract_description(self):
         """
         <span class="description-text">„American Horror Story“ ist eine US-amerikanische Horror - Fernsehserie. Jede ihrer Staffel setzt sich mit einem anderen Thema auseinander. Während die erste Staffel von einem Geisterhaus handelt, in welches die Familie Harmon unwissend einzieht, schildert die zweite Staffel die Geschehnisse in einer Nervenklinik im Jahre 1964. Die dritte Staffel beschäftigt sich mit einer kleinen </span>
@@ -292,7 +294,7 @@ class SerienstreamSeries:
         </div>
         """
 
-        # s.to uses both src= and data-src= depending on page version.
+        # serienstream.to uses both src= and data-src= depending on page version.
         pattern = re.compile(
             r'(?:data-)?src="(?P<url>(?:https?://(?:serienstream|s)\.to)?/media/images/channel/[^"]+)"'
         )
@@ -547,7 +549,7 @@ class SerienstreamSeries:
         """
         from .season import SerienstreamSeason
 
-        # s.to currently serves both absolute and relative hrefs.
+        # serienstream.to currently serves both absolute and relative hrefs.
         # Support both and normalize them to absolute URLs.
         pattern = re.compile(
             r'href="(?P<href>(?:https?://(?:serienstream|s)\.to)?/serie/[^\"\s]+/staffel-\d+)/?"'
@@ -594,16 +596,16 @@ class SerienstreamSeries:
     # PUBLIC METHODS
     # -----------------------------
     def download(self):
+        # One failed episode must not abandon the rest of the batch.
         for season in self.seasons:
-            for episode in season.episodes:
-                episode.download()
+            season.download()
 
     def watch(self):
+        # One failed episode must not abandon the rest of the batch.
         for season in self.seasons:
-            for episode in season.episodes:
-                episode.watch()
+            season.watch()
 
     def syncplay(self):
+        # One failed episode must not abandon the rest of the batch.
         for season in self.seasons:
-            for episode in season.episodes:
-                episode.syncplay()
+            season.syncplay()

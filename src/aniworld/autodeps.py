@@ -5,18 +5,17 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
-from typing import List, Optional
 
 PLATFORM = platform.system()
 
 try:
     from .common import fetch_github_asset_urls
-    from .config import GLOBAL_SESSION
+    from .config import ANIWORLD_CONFIG_DIR, GLOBAL_SESSION
     from .logger import get_logger
 
 except ImportError:
     from aniworld.common import fetch_github_asset_urls
-    from aniworld.config import GLOBAL_SESSION
+    from aniworld.config import ANIWORLD_CONFIG_DIR, GLOBAL_SESSION
     from aniworld.logger import get_logger
 
 
@@ -74,7 +73,7 @@ def get_ffmpeg_windows_url() -> str:
 # -----------------------------
 # Syncplay
 # -----------------------------
-def get_syncplay_release_url() -> List[str]:
+def get_syncplay_release_url() -> list[str]:
     """Fetch the URLs for the latest Windows Syncplay portable ZIP release."""
     repo = "Syncplay/syncplay"
     portable_pattern = r"Syncplay[_-]\d+(?:\.\d+)*_Portable\.zip$"
@@ -124,6 +123,20 @@ deps = {
 
 
 # -----------------------------
+# Auto-install kill switch
+# -----------------------------
+def auto_install_disabled() -> bool:
+    """True when ANIWORLD_NO_AUTO_INSTALL=1.
+
+    Blocks every unattended download/install the app would otherwise do on its
+    own: the portable binaries, the system package manager (which shells out to
+    sudo), Xvfb and the patchright Chromium. Anything already installed is
+    still used normally.
+    """
+    return os.getenv("ANIWORLD_NO_AUTO_INSTALL", "0").strip() == "1"
+
+
+# -----------------------------
 # Dependency Manager
 # -----------------------------
 class DependencyManager:
@@ -131,11 +144,7 @@ class DependencyManager:
 
     def __init__(self, install_folder=None):
         self.deps = deps
-        configured_install_folder = (
-            install_folder
-            or os.getenv("ANIWORLD_INSTALL_FOLDER")
-            or (Path.home() / ".aniworld")
-        )
+        configured_install_folder = install_folder or ANIWORLD_CONFIG_DIR
         configured_install_folder = Path(configured_install_folder).expanduser()
         if not configured_install_folder.is_absolute():
             configured_install_folder = Path.home() / configured_install_folder
@@ -157,7 +166,7 @@ class DependencyManager:
 
     def _find_binary_in_dir(
         self, search_dir: Path, binary_names: list[str]
-    ) -> Optional[Path]:
+    ) -> Path | None:
         for binary_name in binary_names:
             direct_match = search_dir / binary_name
             if direct_match.exists():
@@ -172,7 +181,7 @@ class DependencyManager:
 
         return None
 
-    def _find_binary_on_path(self, name: str, dep_info: dict) -> Optional[Path]:
+    def _find_binary_on_path(self, name: str, dep_info: dict) -> Path | None:
         binary_names = [name, *(dep_info.get("binary_names") or [])]
 
         for binary_name in dict.fromkeys(binary_names):
@@ -182,7 +191,7 @@ class DependencyManager:
 
         return None
 
-    def _find_local_binary(self, name: str, dep_info: dict) -> Optional[Path]:
+    def _find_local_binary(self, name: str, dep_info: dict) -> Path | None:
         binary_names = dep_info.get("binary_names") or [name]
         binary_path = self._find_binary_in_dir(self.install_folder, binary_names)
         if binary_path:
@@ -217,6 +226,10 @@ class DependencyManager:
         raise ValueError(f"Unsupported archive format: {archive_path}")
 
     def _confirm_install(self, message: str, default: bool = True) -> bool:
+        if auto_install_disabled():
+            self.logger.debug(f"ANIWORLD_NO_AUTO_INSTALL=1 — skipping: {message}")
+            return False
+
         if not sys.stdin or not sys.stdin.isatty():
             return False
 
@@ -226,7 +239,7 @@ class DependencyManager:
             return default
         return reply in {"y", "yes"}
 
-    def _resolve_download_url(self, name: str, dep_info: dict) -> Optional[str]:
+    def _resolve_download_url(self, name: str, dep_info: dict) -> str | None:
         url = dep_info.get("url")
 
         if name == "mpv" and PLATFORM == "Windows" and not url:
@@ -250,8 +263,7 @@ class DependencyManager:
         resp = GLOBAL_SESSION.get(url, stream=True)
         resp.raise_for_status()
         with open(local_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
+            f.writelines(resp.iter_content(chunk_size=8192))
 
         if PLATFORM != "Windows":
             local_path.chmod(0o755)
@@ -260,9 +272,7 @@ class DependencyManager:
         resolved_binary = self._resolve_local_binary(name, dep_info, local_path)
         return resolved_binary or local_path
 
-    def _resolve_local_binary(
-        self, name: str, dep_info: dict, local_path: Optional[Path]
-    ):
+    def _resolve_local_binary(self, name: str, dep_info: dict, local_path: Path | None):
         if not local_path or not local_path.exists():
             return None
 
@@ -321,15 +331,14 @@ class DependencyManager:
         package_error = None
         portable_error = None
 
-        if url:
-            if self._confirm_install(
-                f"{name} was not found on PATH. Install a portable copy into {self.install_folder} for this runtime?"
-            ):
-                try:
-                    return self._download_binary(name, dep_info, url)
-                except Exception as exc:
-                    portable_error = exc
-                    self.logger.warning(f"Portable install failed for {name}: {exc}")
+        if url and self._confirm_install(
+            f"{name} was not found on PATH. Install a portable copy into {self.install_folder} for this runtime?"
+        ):
+            try:
+                return self._download_binary(name, dep_info, url)
+            except Exception as exc:
+                portable_error = exc
+                self.logger.warning(f"Portable install failed for {name}: {exc}")
 
         pkg_name = dep_info.get("package")
         if pkg_name and self._confirm_install(
@@ -360,6 +369,12 @@ class DependencyManager:
         raise FileNotFoundError(install_hint)
 
     def _install_with_package_manager(self, name: str) -> bool:
+        if auto_install_disabled():
+            self.logger.debug(
+                f"ANIWORLD_NO_AUTO_INSTALL=1 — not installing {name} via package manager"
+            )
+            return False
+
         dep_info = self.deps.get(name, {}).get(PLATFORM, {})
         pkg_name = dep_info.get("package")
         if not pkg_name:
@@ -397,9 +412,9 @@ class DependencyManager:
 def get_player_path() -> Path:
     manager = DependencyManager()
     use_iina = os.getenv("ANIWORLD_USE_IINA") == "1"
-    use_aniskip = os.getenv("ANIWORLD_ANISKIP") == "1"
+    # TODO: check if aniskip is selected in future for IINA to fallback to mpv for functionality if issue #200 is fixed
 
-    if PLATFORM == "Darwin" and use_iina and not use_aniskip:
+    if PLATFORM == "Darwin" and use_iina:
         return manager.fetch_binary("iina")
 
     return manager.fetch_binary("mpv")
@@ -425,6 +440,12 @@ def _ensure_xvfb():
         return
     _log = get_logger(__name__)
     if not shutil.which("Xvfb"):
+        if auto_install_disabled():
+            _log.warning(
+                "Xvfb not found and ANIWORLD_NO_AUTO_INSTALL=1 — install it yourself "
+                "(e.g. 'sudo apt install xvfb') or set DISPLAY to an existing X server."
+            )
+            return
         _log.info("Xvfb not found — installing via apt...")
         try:
             subprocess.run(
@@ -445,11 +466,28 @@ def _ensure_xvfb():
     os.environ["DISPLAY"] = ":99"
 
 
+def _default_playwright_browsers_path() -> Path:
+    """Return Playwright's platform-specific browser cache directory."""
+    if PLATFORM == "Windows":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "ms-playwright"
+        return Path.home() / "AppData" / "Local" / "ms-playwright"
+
+    if PLATFORM == "Darwin":
+        return Path.home() / "Library" / "Caches" / "ms-playwright"
+
+    cache_dir = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return cache_dir / "ms-playwright"
+
+
 def ensure_patchright_chromium():
     """Install the patchright Chromium browser if not already present."""
-    import sys
-
     _log = get_logger(__name__)
+    if auto_install_disabled():
+        _log.debug("ANIWORLD_NO_AUTO_INSTALL=1 — skipping chromium/Xvfb setup")
+        return
+
     try:
         import patchright  # noqa: F401
     except ImportError:
@@ -458,17 +496,36 @@ def ensure_patchright_chromium():
 
     _ensure_xvfb()
     try:
-        _log.debug("Ensuring patchright chromium is installed...")
-        _log.info("Installing patchright chromium (this may take a moment)...")
+        from patchright._impl._driver import compute_driver_executable, get_driver_env
+
+        os.environ.setdefault(
+            "PLAYWRIGHT_BROWSERS_PATH",
+            _default_playwright_browsers_path().resolve().as_posix(),
+        )
+
+        driver_executable, driver_cli = compute_driver_executable()
+        driver_path = Path(driver_executable).resolve()
+        os.environ.setdefault("PLAYWRIGHT_NODEJS_PATH", driver_path.as_posix())
+
+        if PLATFORM != "Windows" and not os.access(driver_path, os.X_OK):
+            driver_path.chmod(driver_path.stat().st_mode | 0o111)
+
+        _log.debug("Installing patchright chromium (this may take a moment)...")
         subprocess.run(
-            [sys.executable, "-m", "patchright", "install", "chromium"],
+            [
+                driver_path.as_posix(),
+                driver_cli,
+                "install",
+                "chromium",
+                "--no-shell",
+            ],
             check=True,
+            env=get_driver_env(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         _log.debug("patchright chromium is ready")
-        _log.info("patchright chromium is ready")
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         _log.warning(f"patchright chromium install failed: {e}")
 
 

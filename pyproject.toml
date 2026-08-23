@@ -1,31 +1,34 @@
 [project]
 name = "aniworld"
-version = "4.4.1"
+version = "5.0.2"
 authors = [{ name = "Phoenixthrush UwU", email = "contact@phoenixthrush.com" }]
 maintainers = [
   { name = "Phoenixthrush UwU", email = "contact@phoenixthrush.com" },
+  { name = "Sirox", email = "iloveshell@proton.me"}
 ]
 description = "AniWorld-Downloader is a command-line tool for downloading and streaming movies and series."
 readme = "README.md"
 requires-python = ">=3.10"
 # requires version numbers from 06/2026
 dependencies = [
+  "certifi",                                                                  # CA bundle for bundled runtimes
   "niquests",                                                                 # >=3.7
+  "requests",                                                                 # used directly by web/app.py and web/tmdb.py
   "npyscreen",                                                                # >=3.7
   "ffmpeg-python",                                                            # ???
   "python-dotenv",                                                            # >=3.10
   "rich",                                                                     # >=3.9.0
-  "fake-useragent",                                                           # >=3.9
   "flask",                                                                    # >=3.9
   "flask-wtf",                                                                # >=3.10
-  "authlib",                                                                  # >=3.10
-  "requests",                                                                 # >=3.10
   "waitress",                                                                 # >=3.9.0
   "packaging",                                                                # >=3.8
   "cryptography",                                                             # !=3.9.0, !=3.9.1, >=3.9
   "patchright",                                                               # >=3.9
+  "curl_cffi",                                                                # TLS impersonation for Cloudflare-gated hosters (VOE)
+  "authlib",                                                                  # OIDC/SSO always wired up in web/auth.py, not optional here
   'windows-curses<3.14; sys_platform == "win32" and python_version < "3.14"', # ??? - npyscreen on Windows
 ]
+
 
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -34,10 +37,26 @@ classifiers = [
 license = "MIT"
 license-files = ["LICENSE"]
 
+[project.optional-dependencies]
+sso = [
+  "authlib",                                                                  # >=3.10
+]
+discord = [
+  "discord.py",                                                               # optional Discord request bot
+]
+test = [
+  "pytest",
+]
+all = [
+  "authlib",
+  "discord.py",
+]
+
+
 [project.urls]
 homepage = "https://github.com/phoenixthrush/AniWorld-Downloader"
 changelog = "https://github.com/phoenixthrush/AniWorld-Downloader/commits/models"
-documentation = "https://readthedocs.org"
+documentation = "https://www.phoenixthrush.com/AniWorld-Downloader-Docs/"
 bugs = "https://github.com/phoenixthrush/AniWorld-Downloader/issues"
 issues = "https://github.com/phoenixthrush/AniWorld-Downloader/issues"
 tracker = "https://github.com/phoenixthrush/AniWorld-Downloader/issues"
@@ -48,7 +67,32 @@ donate = "https://github.com/sponsors/phoenixthrush"
 discord = "https://discord.com/invite/BfDvrKd8V5"
 
 [tool.setuptools.package-data]
-aniworld = ["web/templates/*.html", "web/static/*.css", "web/static/*.js"]
+aniworld = [
+  ".env.example",
+  "ascii/ASCII.txt",
+  "aniskip/scripts/*.lua",
+  "web/templates/*.html",
+  "web/static/*.css",
+  "web/static/*.js",
+  "browsers.jsonl",
+]
 
 [project.scripts]
 aniworld = "aniworld.__main__:main"
+
+[tool.ruff.lint.per-file-ignores]
+# schedule.py works on naive wall-clock datetimes by design: that is what keeps
+# a cron line at 22:00 across a DST switch. Its tests build them by hand, so the
+# "always pass a timezone" rule does not apply to them.
+"tests/test_schedule.py" = ["DTZ001"]
+# Both set an environment variable that has to be in place before aniworld is
+# imported, so their imports cannot all sit at the top of the file.
+"tests/autosync_simulation.py" = ["E402"]
+"tests/conftest.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The two legacy scripts in tests/ are manual smoke checks against the live
+# sites. They expose no test functions, so pytest collects nothing from them.
+python_files = ["test_*.py"]
+addopts = "--strict-markers"

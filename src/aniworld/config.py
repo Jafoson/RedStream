@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import re
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
@@ -7,11 +8,11 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-import fake_useragent
+import certifi
 from niquests import Session
 from packaging.version import parse as parse_version
 
-from .env import merge_env
+from .env import initialize_app_env
 from .logger import get_logger
 
 VERSION = None
@@ -20,6 +21,11 @@ try:
     VERSION = version("aniworld")
 except PackageNotFoundError:
     VERSION = None
+
+CA_CERT_BUNDLE = certifi.where()
+os.environ.setdefault("SSL_CERT_FILE", CA_CERT_BUNDLE)
+os.environ.setdefault("REQUESTS_CA_BUNDLE", CA_CERT_BUNDLE)
+os.environ.setdefault("CURL_CA_BUNDLE", CA_CERT_BUNDLE)
 
 
 def get_latest_version():
@@ -52,13 +58,10 @@ def is_newest_version() -> bool:
     return parse_version(VERSION) >= parse_version(latest_version)
 
 
-# AniWorld configuration directory
-ANIWORLD_CONFIG_DIR = Path.home() / ".aniworld"
-
-# Load .env file whenever config is imported
-merge_env(
+# Resolve the app directory and load its .env file whenever config is imported.
+ANIWORLD_CONFIG_DIR = initialize_app_env(
     Path(__file__).resolve().parent / ".env.example",
-    ANIWORLD_CONFIG_DIR / ".env",
+    Path.home() / ".aniworld",
 )
 
 logger = get_logger(__name__)
@@ -99,20 +102,53 @@ def get_video_codec():
 
 # NIQUESTS
 
-try:
-    DEFAULT_USER_AGENT = str(
-        fake_useragent.UserAgent(os=["Windows", "Mac OS X"]).random
-    )
-except fake_useragent.errors.FakeUserAgentError:
-    # TODO: fix - currently happens on nuitka builds
-    DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+
+def _get_random_user_agent() -> str:
+    fallback = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+    jsonl_path = Path(__file__).parent / "browsers.jsonl"
+
+    if not jsonl_path.exists():
+        return fallback
+
+    valid_agents = []
+    try:
+        # Stream the file to avoid loading all 10,000 lines into memory
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                # Fast string pre-filter before expensive JSON parsing
+                if '"Windows"' in line or '"Mac OS X"' in line:
+                    data = json.loads(line)
+                    if data.get("os") in ("Windows", "Mac OS X"):
+                        ua = data.get("useragent")
+                        if ua:
+                            valid_agents.append(ua)
+
+        if valid_agents:
+            return random.choice(valid_agents)
+    except Exception:
+        pass
+
+    return fallback
+
+
+DEFAULT_USER_AGENT = _get_random_user_agent()
 
 LULUVDO_USER_AGENT = (
     "Mozilla/5.0 (Android 15; Mobile; rv:132.0) Gecko/132.0 Firefox/132.0"
 )
 
+# TODO:
+# This is so fucking annoying because using GLOBAL_SESSION anywhere in the
+# codebase ends up importing basically every module, so even a simple fetch
+# takes 20–30 seconds just to start...
+#
+# I already made a lazy-loading wrapper that defers all the __init__.py imports
+# in another branch, but for now I just have to sit through the import time
+# every run, even though the actual fetch only takes about a second
 GLOBAL_SESSION = Session(
-    resolver=["doh+google://"],
+    resolver=["doh+cloudflare://"],
+    disable_http3=True,
+    multiplexed=False,
     headers={
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Sec-Fetch-Site": "none",
@@ -125,18 +161,23 @@ GLOBAL_SESSION = Session(
         "Priority": "u=0, i",
     },
 )
+GLOBAL_SESSION.verify = CA_CERT_BUNDLE
 
 logger.debug("Config initialized successfully")
+logger.debug(
+    "If this shit seems to hang, just wait. It's currently loading all modules, which can take up to ~30 seconds, but only once per startup. This is being worked on and won't take nearly as long in the future."
+)
 
 # -----------------------------
 # Provider Stuff
 # -----------------------------
 SUPPORTED_PROVIDERS = (
     "VOE",
+    "MegaKino",
     "Vidmoly",
     "Vidoza",
-    # "Doodstream",
-    # "Filemoon",
+    "Doodstream",
+    "Filemoon",
     # "LoadX",
     # "Luluvdo",
     # "Streamtape",
@@ -146,7 +187,7 @@ SUPPORTED_PROVIDERS = (
 def parse_provider_order(value, allowed_providers=None):
     allowed = tuple(dict.fromkeys(allowed_providers or SUPPORTED_PROVIDERS))
     if not allowed:
-        return tuple()
+        return ()
 
     if not value:
         return allowed
@@ -190,7 +231,7 @@ def build_provider_attempt_order(
         )
     )
     if not available:
-        return (selected_provider,) if selected_provider else tuple()
+        return (selected_provider,) if selected_provider else ()
 
     ordered = []
     seen = set()
@@ -212,7 +253,12 @@ def build_provider_attempt_order(
 
 PROVIDER_HEADERS_D = {
     "Vidmoly": {"Referer": "https://vidmoly.biz"},
-    "Doodstream": {"Referer": "https://dood.li/"},
+    # Doodstream signs the direct link against the requesting client, so the
+    # download must reuse the same User-Agent the extractor sent.
+    "Doodstream": {
+        "User-Agent": DEFAULT_USER_AGENT,
+        "Referer": "https://dood.li/",
+    },
     "VOE": {
         "User-Agent": DEFAULT_USER_AGENT,
         "Accept": "*/*",
@@ -223,6 +269,7 @@ PROVIDER_HEADERS_D = {
         "Origin": "https://voe.sx",
     },
     "LoadX": {"Accept": "*/*"},
+    "Cineby": {"Referer": "https://www.cineby.at/"},
     "Filemoon": {"User-Agent": DEFAULT_USER_AGENT, "Referer": "https://filemoon.to"},
     "Luluvdo": {
         "User-Agent": LULUVDO_USER_AGENT,
@@ -234,10 +281,30 @@ PROVIDER_HEADERS_D = {
 
 PROVIDER_HEADERS_W = {
     "Vidmoly": {"Referer": "https://vidmoly.biz"},
-    "Doodstream": {"Referer": "https://dood.li/"},
-    "VOE": {"User-Agent": DEFAULT_USER_AGENT},
-    "Luluvdo": {"User-Agent": LULUVDO_USER_AGENT},
+    # Doodstream signs the direct link against the requesting client, so the
+    # download must reuse the same User-Agent the extractor sent.
+    "Doodstream": {
+        "User-Agent": DEFAULT_USER_AGENT,
+        "Referer": "https://dood.li/",
+    },
+    "VOE": {
+        "User-Agent": DEFAULT_USER_AGENT,
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Referer": "https://voe.sx/",
+        "Origin": "https://voe.sx",
+    },
+    "LoadX": {"Accept": "*/*"},
+    "Cineby": {"Referer": "https://www.cineby.at/"},
     "Filemoon": {"User-Agent": DEFAULT_USER_AGENT, "Referer": "https://filemoon.to"},
+    "Luluvdo": {
+        "User-Agent": LULUVDO_USER_AGENT,
+        "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Origin": "https://luluvdo.com",
+        "Referer": "https://luluvdo.com/",
+    },
 }
 
 
@@ -339,16 +406,41 @@ ANIWORLD_EPISODE_PATTERN = re.compile(
 )
 
 HANIME_TV_SERIES_PATTERN = re.compile(
-    r"^https?://(?:www\.)?hanime\.tv/videos/hentai/[A-Za-z0-9\-]+/?$",
+    r"^https?://(?:www\.)?hanime\.tv/"
+    r"(?:videos/hentai|hentai/video|playlists/[0-9a-z]+/video)/"
+    r"[A-Za-z0-9\-]+/?$",
     re.IGNORECASE,
 )
 
+# serienstream.to went down at times; serienstream.cx and 186.2.175.5 are mirrors.
+
+# Reachable hosts, in preference order. The IP is a last resort and needs a Host
+# header (see models/s_to/http.py) because it serves the same site.
+STO_DOMAINS = ["serienstream.to", "serienstream.cx"]
+STO_IP = "186.2.175.5"
+
+# Retired hosts that are still recognised and rewritten onto an active host, but
+# never requested themselves. Keeps old links and bookmarks working.
+STO_LEGACY_DOMAINS = ["s.to"]
+
+STO_ALL_HOSTS = [*STO_DOMAINS, STO_IP, *STO_LEGACY_DOMAINS]
+
+_STO_HOST = r"(?:www\.)?(?:" + "|".join(re.escape(h) for h in STO_ALL_HOSTS) + r")"
+
+STO_HOST_RE = re.compile(r"^(https?://)" + _STO_HOST + r"(?=[:/?#]|$)", re.IGNORECASE)
+
+
+def is_sto_host(url):
+    """True if the URL points at any known serienstream host."""
+    return bool(STO_HOST_RE.match(str(url or "")))
+
+
 SERIENSTREAM_SERIES_PATTERN = re.compile(
-    r"^https?://(www\.)?(serienstream|s)\.to/serie/[a-zA-Z0-9\-]+/?$", re.IGNORECASE
+    rf"^https?://{_STO_HOST}/serie/[a-zA-Z0-9\-]+/?$", re.IGNORECASE
 )
 
 SERIENSTREAM_SEASON_PATTERN = re.compile(
-    r"^https?://(www\.)?(serienstream|s)\.to/serie/"
+    rf"^https?://{_STO_HOST}/serie/"
     r"[a-zA-Z0-9\-]+/"
     r"staffel-\d+"
     r"/?$",
@@ -356,18 +448,71 @@ SERIENSTREAM_SEASON_PATTERN = re.compile(
 )
 
 SERIENSTREAM_EPISODE_PATTERN = re.compile(
-    r"^https?://(www\.)?(serienstream|s)\.to/serie/"
+    rf"^https?://{_STO_HOST}/serie/"
     r"[a-zA-Z0-9\-]+/"
     r"staffel-\d+/episode-\d+"
     r"/?$",
     re.IGNORECASE,
 )
 
-HIANIME_SERIES_PATTERN = re.compile(r"", re.IGNORECASE)
+MEGAKINO_SERIES_PATTERN = re.compile(
+    r"^https?://(?:www\.)?megakino[\w-]*\.[^/]+/(?:action|films|serials)/[^?#]+(?:\.html)?/?(?:#mkep=\d+)?$",
+    re.IGNORECASE,
+)
 
-HIANIME_SEASON_PATTERN = re.compile(r"", re.IGNORECASE)
+MANGA_FIRE_SERIES_PATTERN = re.compile(
+    r"^https?://(?:www\.)?mangafire\.to/title/[a-zA-Z0-9]+(?:-[a-zA-Z0-9\-]+)?/?$",
+    re.IGNORECASE,
+)
 
-HIANIME_EPISODE_PATTERN = re.compile(r"", re.IGNORECASE)
+MANGA_FIRE_CHAPTER_PATTERN = re.compile(
+    r"^https?://(?:www\.)?mangafire\.to/title/[a-zA-Z0-9]+(?:-[a-zA-Z0-9\-]+)?/chapter/[0-9]+(?:\.[0-9]+)?/?$",
+    re.IGNORECASE,
+)
+
+FILMPALAST_SERIES_PATTERN = re.compile(
+    r"^https?://(?:www\.)?filmpalast\.[^/]+/stream/[^/?#]+/?$",
+    re.IGNORECASE,
+)
+
+# The trailing (?:\?[^#]*)? lets per-episode URLs (…?s=1&e=2) resolve too.
+KINOX_SERIES_PATTERN = re.compile(
+    r"^https?://(?:www\.)?kinox[\w.-]*\.[^/]+/Stream/[^/?#]+?(?:\.html)?(?:\?[^#]*)?/?$",
+    re.IGNORECASE,
+)
+
+_CINEBY_HOST = r"(?:www\.)?cineby\.(?:at|app|[a-z]{2,4})"
+
+# /movie/<id> or /tv/<id> (optionally ?s=N for a specific TV season)
+CINEBY_SERIES_PATTERN = re.compile(
+    rf"^https?://{_CINEBY_HOST}/(?:movie|tv)/\d+(?:\?[^#]*)?/?$",
+    re.IGNORECASE,
+)
+
+# /movie/<id> or /tv/<id>/<season>/<episode>
+CINEBY_EPISODE_PATTERN = re.compile(
+    rf"^https?://{_CINEBY_HOST}/(?:movie/\d+|tv/\d+/\d+/\d+)(?:\?[^#]*)?/?$",
+    re.IGNORECASE,
+)
+
+_BS_HOST = r"(?:www\.)?(?:burning-series\.(?:io|net)|burningseries\.(?:ac|cx)|bs\.cine\.to|bs\.to)"
+
+BURNINGSERIES_SERIES_PATTERN = re.compile(
+    rf"^https?://{_BS_HOST}/serie/[a-zA-Z0-9\-]+(?:\?[^#]*)?/?$",
+    re.IGNORECASE,
+)
+
+# /serie/<slug>/<season>[/<lang>]
+BURNINGSERIES_SEASON_PATTERN = re.compile(
+    rf"^https?://{_BS_HOST}/serie/[a-zA-Z0-9\-]+/\d+(?:/[a-z]{{2}})?/?$",
+    re.IGNORECASE,
+)
+
+# /serie/<slug>/<season>/<episode-slug>/<lang>
+BURNINGSERIES_EPISODE_PATTERN = re.compile(
+    rf"^https?://{_BS_HOST}/serie/[a-zA-Z0-9\-]+/\d+/[^/]+/[a-z]{{2}}/?$",
+    re.IGNORECASE,
+)
 
 # -----------------------------
 # Directories

@@ -5,10 +5,9 @@ from html import unescape
 from pathlib import Path
 
 from ...config import (
-    build_provider_attempt_order,
-    GLOBAL_SESSION,
     NAMING_TEMPLATE,
     SERIENSTREAM_EPISODE_PATTERN,
+    build_provider_attempt_order,
     logger,
 )
 from ...extractors import provider_functions
@@ -22,14 +21,15 @@ from ..common.common import (
 from ..common.common import (
     watch as episode_watch,
 )
+from .http import sto_get, sto_host
 
 
 # -----------------------------
-# Language Stuff (s.to only)
+# Language Stuff (serienstream.to only)
 # -----------------------------
 class Audio(Enum):
     """
-    Available audio language options (s.to only):
+    Available audio language options (serienstream.to only):
         - GERMAN:  German dub
         - ENGLISH: English dub
     """
@@ -40,14 +40,14 @@ class Audio(Enum):
 
 class Subtitles(Enum):
     """
-    Available subtitle options (s.to only):
+    Available subtitle options (serienstream.to only):
         - NONE: no subtitles
     """
 
     NONE = "None"
 
 
-# Map UI labels to enum tuples (s.to labels)
+# Map UI labels to enum tuples (serienstream.to labels)
 LANG_LABEL_TO_ENUM = {
     "Deutsch": (Audio.GERMAN, Subtitles.NONE),
     "Englisch": (Audio.ENGLISH, Subtitles.NONE),
@@ -176,12 +176,10 @@ class SerienstreamEpisode:
     @property
     def series(self):
         if self._series is None:
+            series_url = self.url.rsplit("/staffel-", 1)[0]
             from .series import SerienstreamSeries
 
-            if not self.url:
-                raise ValueError("Episode URL is missing for series extraction.")
-            series_url = self.url.rsplit("/staffel-", 1)[0]
-            self._series = SerienstreamSeries(url=series_url)
+            self._series = SerienstreamSeries(series_url)
         return self._series
 
     @property
@@ -294,22 +292,26 @@ class SerienstreamEpisode:
     def provider_url(self):
         if self.__provider_url is None:
             from urllib.parse import urlparse
+
             from ...playwright.captcha import solve_sto_modal
 
             # Try plain HTTP first — works when no modal is shown
-            resp = GLOBAL_SESSION.get(self.redirect_url)
+            resp = sto_get(self.redirect_url)
             if urlparse(resp.url).netloc != urlparse(self.redirect_url).netloc:
-                # Redirect left s.to — no modal, plain session worked
+                # Redirect left serienstream.to — no modal, plain session worked
                 self.__provider_url = resp.url
             else:
-                # Still on s.to — modal was shown, need browser
+                # Still on serienstream.to — modal was shown, need browser
                 _lang_map = {Audio.GERMAN: "Deutsch", Audio.ENGLISH: "Englisch"}
                 lang = self.selected_language
                 audio = lang[0] if isinstance(lang, tuple) else lang
                 language_label = _lang_map.get(audio, "Deutsch")
 
                 result = solve_sto_modal(
-                    self.url, self.selected_provider, language_label
+                    self.url,
+                    self.selected_provider,
+                    language_label,
+                    redirect_url=self.redirect_url,
                 )
                 self.__provider_url = result if result else resp.url
 
@@ -355,6 +357,7 @@ class SerienstreamEpisode:
                     season=f"{self.season.season_number:02d}",
                     episode=f"{self.episode_number:03d}",
                     language=self.selected_language,
+                    resolution=getattr(self, "_resolution", "unknown"),
                 )
                 self.__base_folder = Path(self.selected_path) / folder_str
         return self.__base_folder
@@ -374,6 +377,7 @@ class SerienstreamEpisode:
                     season=f"{self.season.season_number:02d}",
                     episode=f"{self.episode_number:03d}",
                     language=self.selected_language,
+                    resolution=getattr(self, "_resolution", "unknown"),
                 )
                 self.__folder_path = self._base_folder / folder_str
         return self.__folder_path
@@ -398,6 +402,7 @@ class SerienstreamEpisode:
             file_template = file_template.replace("%season%", "{season}")
             file_template = file_template.replace("%episode%", "{episode}")
             file_template = file_template.replace("%language%", "{language}")
+            file_template = file_template.replace("%resolution%", "{resolution}")
 
             self.__file_name = file_template.format(
                 title=self.series.title_cleaned,
@@ -406,6 +411,7 @@ class SerienstreamEpisode:
                 season=f"{self.season.season_number:02d}",
                 episode=f"{self.episode_number:03d}",
                 language=self.selected_language,
+                resolution=getattr(self, "_resolution", "unknown"),
             )
         return self.__file_name
 
@@ -446,7 +452,7 @@ class SerienstreamEpisode:
             if not self.url:
                 raise ValueError("Episode URL is missing for HTML fetch.")
             logger.debug(f"fetching ({self.url})...")
-            resp = GLOBAL_SESSION.get(self.url)
+            resp = sto_get(self.url)
             self.__html = resp.text
         return self.__html
 
@@ -518,7 +524,7 @@ class SerienstreamEpisode:
                 continue
 
             provider_data.setdefault(key, {})[provider_name] = (
-                f"https://serienstream.to{play_url}"
+                f"https://{sto_host()}{play_url}"
             )
 
         return provider_data
@@ -576,7 +582,7 @@ class SerienstreamEpisode:
         provider_dict = self.__provider_dict_for_language(
             self._normalize_language(language)
         )
-        return tuple(provider_dict.keys()) if provider_dict else tuple()
+        return tuple(provider_dict.keys()) if provider_dict else ()
 
     def provider_attempt_order(self):
         return build_provider_attempt_order(

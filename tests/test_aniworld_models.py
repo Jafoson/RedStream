@@ -4,6 +4,9 @@ from aniworld.models import (
     AniworldEpisode,
     AniworldSeason,
     AniworldSeries,
+    BurningSeriesSeries,
+    FilmPalastEpisode,
+    KinoxSeries,
     SerienstreamEpisode,
     SerienstreamSeason,
     SerienstreamSeries,
@@ -18,9 +21,7 @@ def object_to_json(obj):
     mangled_prefix = f"_{cls.__name__}__"
     data = {}
     for name in vars(obj):
-        clean_name = (
-            name[len(mangled_prefix) :] if name.startswith(mangled_prefix) else name
-        )
+        clean_name = name.removeprefix(mangled_prefix)
         if clean_name.startswith(("_series", "_season", "html")):
             continue
         value = getattr(obj, clean_name, None)
@@ -75,6 +76,10 @@ def run_all_tests():
             SerienstreamEpisode,
             "https://serienstream.to/serie/american-horror-story-die-dunkle-seite-in-dir/staffel-1/episode-1",
         ),
+        # New sites (contributed): movie + series entry points
+        (FilmPalastEpisode, "https://filmpalast.to/stream/scream-7"),
+        (KinoxSeries, "https://kinox.to/Stream/Avatar-Der_Herr_der_Elemente.html"),
+        (BurningSeriesSeries, "https://bs.to/serie/Breaking-Bad"),
     ]
     all_passed = True
     for cls, url in tests:

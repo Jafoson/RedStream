@@ -1,4 +1,5 @@
 import re
+import sys
 
 import niquests
 
@@ -58,7 +59,7 @@ if __name__ == "__main__":
     link = input("Enter Vidoza Link: ").strip()
     if not link:
         print("Error: No link provided")
-        exit(1)
+        sys.exit(1)
 
     try:
         print("=" * 25)
@@ -70,9 +71,7 @@ if __name__ == "__main__":
         print("Preview image:", get_preview_image_link_from_vidoza(link))
         print("=" * 25)
 
-        print(
-            f'mpv "{direct_link}" --http-header-fields=User-Agent: "{DEFAULT_USER_AGENT}"'
-        )
+        print(f'mpv "{direct_link}" --user-agent="{DEFAULT_USER_AGENT}"')
 
         print("=" * 25)
     except ValueError as e:

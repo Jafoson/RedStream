@@ -8,9 +8,8 @@ from .autodeps import ensure_patchright_chromium
 from .config import ACTION_METHODS, ANIWORLD_CONFIG_DIR, VERSION
 from .env import merge_env
 from .logger import get_logger
-from .menu import app
+from .models.common import run_each
 from .providers import resolve_provider
-from .search import search
 
 merge_env(
     Path(__file__).resolve().parent / ".env.example",
@@ -53,14 +52,14 @@ def aniworld():
     """Main entry point"""
     try:
         _enable_debug_logging_if_requested()
-        logger.debug("Starting...")
-        logger.info("Starting AniWorld-Downloader...")
+        logger.debug("Starting AniWorld-Downloader...")
         set_terminal_title()
         args = parse_args()
 
-        logger.info("Checking dependencies...")
-        ensure_patchright_chromium()
-        logger.info("Dependencies OK")
+        if os.getenv("ANIWORLD_DOWNLOAD_PATH") != "/app/Downloads":
+            logger.debug("Checking dependencies...")
+            ensure_patchright_chromium()
+            logger.debug("Dependencies OK")
 
         if args.web_ui:
             from .web import start_web_ui
@@ -150,7 +149,12 @@ def aniworld():
                 run_action(obj, action)
             return 0
 
+        from .search import search
+
         url = args.url[0] if args.url else search()
+
+        # FIX: replace s.to with serienstream.to to avoid issues with s.to being down
+        url = url.replace("://s.to", "://serienstream.to")
 
         provider = resolve_provider(url)
 
@@ -184,6 +188,8 @@ def aniworld():
             return 0
 
         # AniWorld series -> show menu
+        from .menu import app
+
         result = app(url=url)
         if not result:
             return 130
@@ -198,14 +204,29 @@ def aniworld():
 
         if action in ACTION_METHODS:
             method_name = ACTION_METHODS[action]
+            built = []
+            failures = []
+
+            # Building an episode hits the network too, so a title that has gone
+            # missing has to be survivable in the same way the action itself is.
             for episode_url in episodes:
-                episode = provider.episode_cls(
-                    url=episode_url,
-                    selected_path=selected_path,
-                    selected_language=selected_language,
-                    selected_provider=selected_provider,
-                )
-                getattr(episode, method_name)()
+                try:
+                    built.append(
+                        provider.episode_cls(
+                            url=episode_url,
+                            selected_path=selected_path,
+                            selected_language=selected_language,
+                            selected_provider=selected_provider,
+                        )
+                    )
+                except Exception as exc:
+                    logger.error("Could not load %s: %s", episode_url, exc)
+                    failures.append((episode_url, exc))
+
+            failures.extend(run_each(built, method_name))
+            if failures:
+                # Non-zero so scripts and cron jobs still notice an incomplete run
+                return 1
 
         return 0
 
@@ -214,7 +235,7 @@ def aniworld():
         return 130
 
     except Exception as err:
-        logger.error("Unexpected error occurred", exc_info=True)
+        logger.exception("Unexpected error occurred")
         print(f"\nAn unexpected error occurred: {err}", file=sys.stderr)
         print("Please check the logs for more details.", file=sys.stderr)
         return 1

@@ -2,10 +2,10 @@ import base64
 import json
 import logging
 import re
+import sys
 from urllib.parse import urlparse
 
 import niquests
-
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 try:
@@ -47,6 +47,8 @@ def _extract_file_code(url):
 
     e.g., https://bysezejataos.com/d/56q7gpy3qyo6 -> 56q7gpy3qyo6
     """
+    if not url:
+        return None
     match = FILE_CODE_PATTERN.search(url)
     return match.group("code") if match else None
 
@@ -84,8 +86,10 @@ def _decrypt_playback_data(playback):
     key_bytes = b""
     for part in key_parts:
         if not part:
-            return None
-        key_bytes += _base64url_decode(part)
+            continue
+        decoded = _base64url_decode(part)
+        if len(decoded) == 16:
+            key_bytes += decoded
 
     # Try primary payload first, then payload2
     result = _decrypt_payload(playback, key_bytes, "iv", "payload")
@@ -201,6 +205,8 @@ def _unpack_js(packed, radix, count, keywords):
 
 def _extract_url_from_string(text):
     """Extract a video URL from text content."""
+    if not text:
+        return None
     hls_match = HLS_PATTERN.search(text)
     if hls_match:
         return hls_match.group("url")
@@ -220,6 +226,8 @@ def _extract_url_from_string(text):
 
 def _try_extract_from_html(html):
     """Try to extract video URL from HTML (legacy Filemoon with packed JS)."""
+    if not html:
+        return None
     # Try packed JS
     match = PACKED_JS_PATTERN.search(html)
     if match:
@@ -262,7 +270,9 @@ def get_direct_link_from_filemoon(embeded_filemoon_link, headers=None):
         # Strategy 2: Try legacy HTML scraping (packed JS)
         resp = GLOBAL_SESSION.get(embeded_filemoon_link, headers=headers)
         resp.raise_for_status()
-        html = resp.text
+        # niquests can hand back None text for an empty/undecodable body; keep it
+        # a string so the regex extractors don't raise a confusing TypeError.
+        html = resp.text or ""
 
         url = _try_extract_from_html(html)
         if url:
@@ -290,7 +300,7 @@ if __name__ == "__main__":
     link = input("Enter Filemoon Link: ").strip()
     if not link:
         print("Error: No link provided")
-        exit(1)
+        sys.exit(1)
 
     try:
         print("=" * 25)
@@ -302,9 +312,7 @@ if __name__ == "__main__":
         print("Preview image:", get_preview_image_link_from_filemoon(link))
         print("=" * 25)
 
-        print(
-            f'mpv "{direct_link}" --http-header-fields=User-Agent: "{DEFAULT_USER_AGENT}"'
-        )
+        print(f'mpv "{direct_link}" --user-agent="{DEFAULT_USER_AGENT}"')
 
         print("=" * 25)
     except ValueError as e:

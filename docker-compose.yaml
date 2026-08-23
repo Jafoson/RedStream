@@ -9,7 +9,10 @@ services:
       # Downloads are stored on the host so they survive container recreation.
       # Run `mkdir -p downloads` before `docker compose up` to avoid root-owned dirs.
       - ./downloads:/app/Downloads
-      # Config, SQLite database and auth data persist across container updates.
+      # Persist application config and auth database across restarts. This holds
+      # the database (users, API keys, custom paths, Auto-Sync exclusions), your
+      # .env, and the custom.css / custom.frag a theme is saved to. Losing this
+      # volume loses all of them.
       - redstream-data:/home/aniworld/.aniworld
     environment:
       # ── API-only mode (disables the browser UI, exposes only /api/* routes) ─
@@ -31,10 +34,25 @@ services:
       ANIWORLD_LANG_SEPARATION: "0"            # 1 = separate into german-dub/, english-sub/ subfolders
       ANIWORLD_DISABLE_ENGLISH_SUB: "0"
 
+      # ── Other settings (uncomment to customise) ───────────────────────────
+      # A copy with every option documented is in src/aniworld/.env.example.
+      # ANIWORLD_NAMING_TEMPLATE: "{title} ({year}) [imdbid-{imdbid}]/Season {season}/{title} S{season}E{episode}.mkv"
+      # ANIWORLD_MOVIE_FOLDER: "1"             # 1 = wrap a movie in its own "Title (Year)" folder, 0 = save it directly
+      # ANIWORLD_UI_LANGUAGE: "en"             # Web UI language: en | de
+      # ANIWORLD_DEBUG_MODE: "0"               # Enable debug logging
+      # ANIWORLD_NO_AUTO_INSTALL: "0"          # 1 = never fetch missing dependencies at runtime
+      # ANIWORLD_HLS_CONCURRENCY: "8"          # Parallel segment downloads for direct HLS downloads
+      # ANIWORLD_ENABLE_LIBRARY: "1"           # Library tab: browse and delete downloaded files
+      # ANIWORLD_ENABLE_HTV: "0"               # Show the Hanime tab (adult content)
+      # MANGAFIRE_FORMAT: "jpg"                # MangaFire output: jpg (images) | cbz (archive)
+      # ANIWORLD_KINOX_DOMAIN: ""              # Override the Kinox domain if the default one is unreachable
+
       # ── Auto-sync ─────────────────────────────────────────────────────────
-      ANIWORLD_SYNC_SCHEDULE: "0"              # 0 (off) | 1min | 30min | 1h | 2h | 4h | 8h | 12h | 24h
-      ANIWORLD_SYNC_LANGUAGE: "German Dub"
-      ANIWORLD_SYNC_PROVIDER: "VOE"
+      ANIWORLD_ENABLE_AUTOSYNC: "0"            # 1 = periodically queue new episodes of series you already have
+      # ANIWORLD_AUTOSYNC_NEW_ONLY: "0"        # 1 = queue only newly announced episodes instead of every missing one
+      # ANIWORLD_AUTOSYNC_MODE: "interval"     # interval (every so often) | cron (fixed times)
+      # ANIWORLD_AUTOSYNC_INTERVAL: "24h"      # Interval mode: 24h | 6h | 90m | 1h30m (a bare number means hours)
+      # ANIWORLD_AUTOSYNC_CRON: "0 3 * * *"    # Cron mode, local time. Plain language works too ("every monday, friday at 10pm")
 
       # ── Reverse proxy (uncomment when behind nginx/Caddy/Traefik) ─────────
       # ANIWORLD_WEB_BASE_URL: "https://redstream.example.com"
@@ -51,6 +69,29 @@ services:
       # ── TMDB posters (required for thumbnails/backdrops) ─────────────────
       # Get your token at https://www.themoviedb.org/settings/api
       ANIWORLD_TMDB_TOKEN: ""   # ← paste your TMDB Bearer token here
+
+    # --- Discord request bot (uncomment the environment block to enable) ---
+    # Unlike the settings above, the bot's fields are written through to the .env
+    # in the config volume when you save them in the Web UI, so setting them here
+    # is optional.
+    #   ANIWORLD_DISCORD_BOT_ENABLED: "1"             # Let users request titles from Discord
+    #   ANIWORLD_DISCORD_TOKEN: ""                    # Bot token from the Discord developer portal
+    #   ANIWORLD_DISCORD_OWNER_ID: ""                 # Your user ID, requests are sent here for approval
+    #   ANIWORLD_DISCORD_MODE: "standard"             # standard = you approve each request, advanced = queued immediately
+    #   ANIWORLD_DISCORD_REQUEST_ROLE_ID: ""          # Only this role may request, empty allows everyone
+    #   ANIWORLD_DISCORD_GUILD_ID: ""                 # Register slash commands in one server (instant), empty = global
+    #   ANIWORLD_DISCORD_LANGUAGE: "en"               # Bot language: en | de
+    #   ANIWORLD_DISCORD_ANNOUNCE_CHANNEL_ID: ""      # Post "now available" here when a requested download finishes
+
+    # --- Captcha solving (uncomment the environment block to tune) ---
+    # Kinox asks for a captcha on every download and serienstream.to sometimes
+    # does. The container already ships Chromium and Xvfb for this; these only
+    # matter if solving misbehaves. The full list is in src/aniworld/.env.example.
+    #   ANIWORLD_CAPTCHA_MANUAL: "0"                  # 1 = never auto-click, only your click in the Web UI counts
+    #   ANIWORLD_CAPTCHA_TIMEOUT: ""                  # Seconds to wait for a solve, empty uses the built-in default
+    #   ANIWORLD_CAPTCHA_DEBUG_LOG: "1"               # Log the captcha browser's console and network errors
+    #   ANIWORLD_NO_ADBLOCK: "0"                      # 1 = disable the ad-blocker, try this if a captcha page won't load
+    #   ANIWORLD_SPOOF_WEBGL: "0"                     # 1 = mask SwiftShader on GPU-less servers
 
     restart: unless-stopped
 

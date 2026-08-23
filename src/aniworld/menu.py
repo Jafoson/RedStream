@@ -5,6 +5,7 @@ import os
 import sys
 from enum import Enum
 from pathlib import Path
+from typing import ClassVar
 
 import npyscreen
 
@@ -16,7 +17,7 @@ def _extract_menu_languages(provider_name: str, provider_data: dict) -> list[str
     languages: list[str] = []
 
     if provider_name == "AniWorld":
-        for key in provider_data.keys():
+        for key in provider_data:
             site_key = INVERSE_LANG_KEY_MAP.get(key)
             if site_key is None:
                 continue
@@ -28,7 +29,7 @@ def _extract_menu_languages(provider_name: str, provider_data: dict) -> list[str
     if provider_name == "SerienStream":
         # SerienStream provider_data keys are usually tuples of Enums like
         # (Audio.GERMAN, Subtitles.NONE) or (Audio.ENGLISH, Subtitles.NONE).
-        for key in provider_data.keys():
+        for key in provider_data:
             if not (isinstance(key, tuple) and len(key) == 2):
                 continue
             audio = getattr(key[0], "value", str(key[0]))
@@ -52,9 +53,39 @@ def _extract_menu_providers(provider_data: dict) -> list[str]:
 
     for providers_map in provider_data.values():
         if isinstance(providers_map, dict):
-            provider_names.update(str(p) for p in providers_map.keys())
+            provider_names.update(str(p) for p in providers_map)
 
     return sorted(provider_names)
+
+
+def _format_menu_episode_label(series_title: str, season, episode) -> str:
+    season_number = getattr(season, "season_number", None)
+    episode_number = getattr(episode, "episode_number", None)
+    are_movies = getattr(season, "are_movies", False)
+
+    if are_movies or season_number == 0:
+        item_label = (
+            f"Movie {episode_number}" if episode_number is not None else "Movie"
+        )
+    else:
+        season_label = (
+            f"Season {season_number}" if season_number is not None else "Season ?"
+        )
+        episode_label = (
+            f"Episode {episode_number}" if episode_number is not None else "Episode ?"
+        )
+        item_label = f"{season_label} - {episode_label}"
+
+    if series_title:
+        return f"{series_title} - {item_label}"
+
+    return getattr(episode, "url", str(episode))
+
+
+def _selected_episode_urls(
+    selected_indices: list[int] | None, episode_urls: list[str]
+) -> list[str]:
+    return [episode_urls[index] for index in (selected_indices or [])]
 
 
 # ============================================================
@@ -82,7 +113,7 @@ if sys.version_info >= (3, 14):
 class CustomTheme(npyscreen.ThemeManager):
     """Color reference: https://npyscreen.readthedocs.io/color.html"""
 
-    default_colors = {
+    default_colors: ClassVar[dict[str, str]] = {
         "DEFAULT": "WHITE_BLACK",
         "FORMDEFAULT": "MAGENTA_BLACK",
         "NO_EDIT": "BLUE_BLACK",
@@ -173,16 +204,23 @@ class MenuApp(npyscreen.NPSApp):
 
         languages = []
         providers = []
-        episodes = []
+        episode_urls = []
+        episode_labels = []
 
         # Only use the first season and first episode for language/provider info
         first_season = series.seasons[0]
         first_episode = first_season.episodes[0]
+        series_title = getattr(series, "title", None) or getattr(
+            series, "title_cleaned", ""
+        )
 
         # All episode URLs
         for season in series.seasons:
             for episode in season.episodes:
-                episodes.append(episode.url)
+                episode_urls.append(episode.url)
+                episode_labels.append(
+                    _format_menu_episode_label(series_title, season, episode)
+                )
 
         # Extract language/provider options from provider_data
         provider_data_dict = (
@@ -226,9 +264,8 @@ class MenuApp(npyscreen.NPSApp):
         # --- Path ---
         path = F.add(
             npyscreen.TitleFilenameCombo,
-            name="Path",
-            value=os.getenv("ANIWORLD_DOWNLOAD_PATH")
-            or (Path("/app/Downloads") if is_docker else Path.home() / "Downloads"),
+            name="Save Location",
+            value=(Path("/app/Downloads") if is_docker else Path.home() / "Downloads"),
             rely=y + 4,
             max_height=2,
         )
@@ -301,7 +338,7 @@ class MenuApp(npyscreen.NPSApp):
         episodes_widget = F.add(
             npyscreen.TitleMultiSelect,
             name="Episodes",
-            values=episodes,
+            values=episode_labels,
             rely=episodes_rely,
             max_height=max_episode_height,
             scroll_exit=True,
@@ -318,11 +355,13 @@ class MenuApp(npyscreen.NPSApp):
         )
 
         def toggle_select_all():
-            if len(episodes_widget.value) == len(episodes):
+            selected_indices = episodes_widget.value or []
+
+            if len(selected_indices) == len(episode_urls):
                 episodes_widget.value = []
                 select_all_button.name = "Select All"
             else:
-                episodes_widget.value = list(range(len(episodes)))
+                episodes_widget.value = list(range(len(episode_urls)))
                 select_all_button.name = "Deselect All"
             F.display()
 
@@ -363,11 +402,7 @@ class MenuApp(npyscreen.NPSApp):
             if provider.get_selected_objects()
             else None
         )
-        selected_episodes = (
-            [episodes_widget.values[i] for i in episodes_widget.value]
-            if episodes_widget.value
-            else []
-        )
+        selected_episodes = _selected_episode_urls(episodes_widget.value, episode_urls)
 
         # --- Return and print ---
         self.result = {
