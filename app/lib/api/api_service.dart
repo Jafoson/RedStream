@@ -97,6 +97,7 @@ class ApiService {
   Future<List<SeriesResult>> getPopularAnimes() => _fetchBrowse('/api/popular-animes');
   Future<List<SeriesResult>> getNewSeries() => _fetchBrowse('/api/new-series');
   Future<List<SeriesResult>> getPopularSeries() => _fetchBrowse('/api/popular-series');
+  Future<List<SeriesResult>> getPopularMovies() => _fetchBrowse('/api/popular-movies');
 
   Future<String> getTmdbPoster(String title) async {
     final resp = await _dio.get<Map<String, dynamic>>(
@@ -114,6 +115,10 @@ class ApiService {
   Future<({List<SeriesResult> items, bool hasMore, int total, List<String> allGenres})> getAllSeries(
           int page, {int perPage = 50, String? genre}) =>
       _fetchPaged('/api/all-series', page, perPage, genre: genre);
+
+  Future<({List<SeriesResult> items, bool hasMore, int total, List<String> allGenres})> getAllMovies(
+          int page, {int perPage = 50, String? genre}) =>
+      _fetchPaged('/api/all-movies', page, perPage, genre: genre);
 
   Future<({List<SeriesResult> items, bool hasMore, int total, List<String> allGenres})> _fetchPaged(
       String path, int page, int perPage, {String? genre}) async {

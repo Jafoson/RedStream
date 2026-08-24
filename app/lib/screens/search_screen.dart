@@ -31,8 +31,13 @@ class SearchScreen extends ConsumerStatefulWidget {
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   int _cols = 5;
-  static const _cats = ['Alle', 'Serien', 'Anime'];
-  static const _catSites = {'Alle': 'both', 'Serien': 'sto', 'Anime': 'aniworld'};
+  static const _cats = ['Alle', 'Serien', 'Anime', 'Filme'];
+  static const _catSites = {
+    'Alle': 'both',
+    'Serien': 'sto',
+    'Anime': 'aniworld',
+    'Filme': 'megakino',
+  };
   String _cat = 'Alle';
   String _query = '';
 

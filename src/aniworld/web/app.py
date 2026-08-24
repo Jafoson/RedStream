@@ -25,8 +25,10 @@ from ..search import (
     fetch_new_animes,
     fetch_new_series,
     fetch_popular_animes,
+    fetch_popular_movies,
     fetch_popular_series,
     fetch_series_genre_slugs,
+    query_megakino,
     query_s_to,
     random_anime,
 )
@@ -160,6 +162,70 @@ def _episode_language_labels(provider_data):
     sort_order = {label: index for index, label in enumerate(order)}
     labels.sort(key=lambda label: (sort_order.get(label, len(sort_order)), label))
     return labels
+
+
+def _megakino_seasons(prov, url):
+    """MegaKino has no seasons: a movie is one item, a serial lists every
+    episode on one page. Surface either as a single synthetic season so the
+    existing series -> season -> episode navigation works unchanged."""
+    if "/serials/" in url.lower():
+        try:
+            episode = prov.episode_cls(url=url, selected_language="German Dub")
+            if episode.is_series:
+                return [
+                    {
+                        "url": url,
+                        "season_number": 1,
+                        "episode_count": len(episode.series_episodes),
+                        "are_movies": False,
+                    }
+                ]
+        except Exception as e:
+            logger.warning(f"MegaKino series detection failed: {e}")
+
+    return [{"url": url, "season_number": 1, "episode_count": 1, "are_movies": True}]
+
+
+def _megakino_episodes(prov, url):
+    episode = prov.episode_cls(url=url, selected_language="German Dub")
+
+    if episode.is_series:
+        return [
+            {
+                "url": f"{url}#mkep={entry['number']}",
+                "episode_number": entry["number"],
+                "title_de": entry["label"] or f"Episode {entry['number']}",
+                "title_en": "",
+                "downloaded": False,
+                "available_languages": ["German Dub"] if entry["providers"] else [],
+                "watch_position": 0,
+                "watch_duration": 0,
+                "is_watched": False,
+                "preview_url": None,
+            }
+            for entry in episode.series_episodes
+        ]
+
+    try:
+        languages = _episode_language_labels(episode.provider_data)
+    except Exception as e:
+        logger.warning(f"MegaKino language detection failed: {e}")
+        languages = ["German Dub"]
+
+    return [
+        {
+            "url": url,
+            "episode_number": 1,
+            "title_de": getattr(episode, "title_cleaned", None) or episode.title,
+            "title_en": "",
+            "downloaded": False,
+            "available_languages": languages,
+            "watch_position": 0,
+            "watch_duration": 0,
+            "is_watched": False,
+            "preview_url": None,
+        }
+    ]
 
 
 # Only match series-level links: /anime/stream/<slug> (no season/episode)
@@ -849,7 +915,20 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
 
         results = []
 
-        if site == "sto":
+        if site == "megakino":
+            # MegaKino search — results already carry absolute URLs/posters.
+            mk_results = query_megakino(keyword) or []
+            if isinstance(mk_results, dict):
+                mk_results = [mk_results]
+            for item in mk_results:
+                results.append(
+                    {
+                        "title": item.get("title", "Unknown"),
+                        "url": item.get("url", ""),
+                        "poster_url": item.get("poster_url", ""),
+                    }
+                )
+        elif site == "sto":
             # serienstream.to search
             sto_results = query_s_to(keyword) or []
             if isinstance(sto_results, dict):
@@ -933,6 +1012,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
 
         try:
             prov = resolve_provider(url)
+            if prov.name == "MegaKino":
+                return jsonify({"seasons": _megakino_seasons(prov, url)})
+
             series = prov.series_cls(url=url)
             seasons_data = []
             for season in series.seasons:
@@ -957,6 +1039,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
 
         try:
             prov = resolve_provider(url)
+            if prov.name == "MegaKino":
+                return jsonify({"episodes": _megakino_episodes(prov, url)})
+
             # Pass series to avoid broken series URL reconstruction in serienstream.to
             # season model (its fallback splits on "-" which fails)
             series_url = re.sub(r"/staffel-\d+/?$", "", url)
@@ -1083,7 +1168,10 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
 
         try:
             prov = resolve_provider(url)
-            episode = prov.episode_cls(url=url)
+            ep_kwargs = {"url": url}
+            if prov.name == "MegaKino":
+                ep_kwargs["selected_language"] = "German Dub"
+            episode = prov.episode_cls(**ep_kwargs)
             pd = episode.provider_data
 
             disable_eng_sub = os.environ.get("ANIWORLD_DISABLE_ENGLISH_SUB", "0") == "1"
@@ -1396,6 +1484,13 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             return jsonify({"error": "Failed to fetch popular series"}), 500
         return jsonify({"results": _enrich_with_tmdb(results)})
 
+    @app.route("/api/popular-movies")
+    def api_popular_movies():
+        results = _cached_browse("popular_movies", fetch_popular_movies)
+        if results is None:
+            return jsonify({"error": "Failed to fetch popular movies"}), 500
+        return jsonify({"results": _enrich_with_tmdb(results)})
+
     @app.route("/api/all-animes")
     def api_all_animes():
         page = max(1, int(request.args.get("page", 1)))
@@ -1452,6 +1547,27 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             "per_page": per_page,
             "has_more": end < total,
             "all_genres": all_genres,
+        })
+
+    @app.route("/api/all-movies")
+    def api_all_movies():
+        page = max(1, int(request.args.get("page", 1)))
+        per_page = min(100, max(10, int(request.args.get("per_page", 50))))
+        # MegaKino exposes no paginated catalog or genre pages — the homepage
+        # showcase is the whole browsable list, paginated here client-side.
+        all_results = _cached_browse("popular_movies", fetch_popular_movies)
+        if all_results is None:
+            return jsonify({"error": "Failed to fetch movie list"}), 500
+        total = len(all_results)
+        start = (page - 1) * per_page
+        end = start + per_page
+        return jsonify({
+            "results": all_results[start:end],
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "has_more": end < total,
+            "all_genres": [],
         })
 
     @app.route("/api/downloaded-folders")

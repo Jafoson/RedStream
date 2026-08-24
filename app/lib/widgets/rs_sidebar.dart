@@ -136,16 +136,17 @@ const _menuItems = [
   _NavItem(Icons.bookmark_rounded, 'Watchlist', NavScreen.watchlist, 1),
   _NavItem(Icons.tv_rounded, 'Serien', NavScreen.serien, 2),
   _NavItem(Icons.movie_filter_rounded, 'Anime', NavScreen.anime, 3),
-  _NavItem(Icons.search_rounded, 'Suche', NavScreen.search, 4),
+  _NavItem(Icons.local_movies_rounded, 'Filme', NavScreen.filme, 4),
+  _NavItem(Icons.search_rounded, 'Suche', NavScreen.search, 5),
 ];
 
 const _libItems = [
-  _NavItem(Icons.download_rounded, 'Downloads', NavScreen.queue, 5),
-  _NavItem(Icons.video_library_rounded, 'Bibliothek', NavScreen.library, 6),
+  _NavItem(Icons.download_rounded, 'Downloads', NavScreen.queue, 6),
+  _NavItem(Icons.video_library_rounded, 'Bibliothek', NavScreen.library, 7),
 ];
 
 const _genItems = [
-  _NavItem(Icons.settings_rounded, 'Einstellungen', NavScreen.settings, 7),
+  _NavItem(Icons.settings_rounded, 'Einstellungen', NavScreen.settings, 8),
 ];
 
 class _NavTile extends StatelessWidget {
@@ -235,7 +236,7 @@ class _ProfileSwitchTile extends StatelessWidget {
   final bool expanded;
   const _ProfileSwitchTile({required this.nav, required this.expanded});
 
-  static const _index = 8;
+  static const _index = 9;
 
   @override
   Widget build(BuildContext context) {

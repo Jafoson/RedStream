@@ -1,7 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
-enum NavScreen { home, serien, anime, search, queue, library, watchlist, settings }
+enum NavScreen { home, serien, anime, filme, search, queue, library, watchlist, settings }
 
 /// Central D-Pad navigation controller — mirrors the HTML prototype's
 /// custom focus engine (region/row/col model).
@@ -25,12 +25,13 @@ class AppNavController extends ChangeNotifier {
   // Cleared when switching screens so each screen starts fresh.
   final _rowCols = <int, int>{};
 
-  static const _sidebarCount = 9; // 8 nav items + 1 profile tile
+  static const _sidebarCount = 10; // 9 nav items + 1 profile tile
   static const _navScreens = [
     NavScreen.home,
     NavScreen.watchlist,
     NavScreen.serien,
     NavScreen.anime,
+    NavScreen.filme,
     NavScreen.search,
     NavScreen.queue,
     NavScreen.library,

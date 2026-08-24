@@ -10,7 +10,7 @@ import '../theme/rs_theme.dart';
 import '../widgets/rs_poster.dart';
 import '../widgets/tv_poster_grid.dart';
 
-enum GridKind { series, anime }
+enum GridKind { series, anime, movies }
 
 enum _Sort { all, neu, trend }
 
@@ -101,9 +101,11 @@ class _GridScreenState extends ConsumerState<GridScreen> {
 
     final api = ref.read(apiServiceProvider);
     try {
-      final result = widget.kind == GridKind.anime
-          ? await api.getAllAnimes(_allPage + 1, perPage: _perPage, genre: _selectedGenre)
-          : await api.getAllSeries(_allPage + 1, perPage: _perPage, genre: _selectedGenre);
+      final result = switch (widget.kind) {
+        GridKind.anime => await api.getAllAnimes(_allPage + 1, perPage: _perPage, genre: _selectedGenre),
+        GridKind.movies => await api.getAllMovies(_allPage + 1, perPage: _perPage, genre: _selectedGenre),
+        GridKind.series => await api.getAllSeries(_allPage + 1, perPage: _perPage, genre: _selectedGenre),
+      };
 
       // Backend always returns the full genre list regardless of page/filter.
       // Merge any new genres into _allGenres so the chips are always complete.
@@ -224,10 +226,14 @@ class _GridScreenState extends ConsumerState<GridScreen> {
 
   List<SeriesResult> _neuTrendItems(BrowseState state) {
     final List<SeriesResult> raw;
-    if (widget.kind == GridKind.anime) {
-      raw = _sort == _Sort.neu ? state.newAnimes : state.popularAnimes;
-    } else {
-      raw = _sort == _Sort.neu ? state.newSeries : state.popularSeries;
+    switch (widget.kind) {
+      case GridKind.anime:
+        raw = _sort == _Sort.neu ? state.newAnimes : state.popularAnimes;
+      case GridKind.movies:
+        // MegaKino only exposes one homepage showcase — Neu and Trend share it.
+        raw = state.popularMovies;
+      case GridKind.series:
+        raw = _sort == _Sort.neu ? state.newSeries : state.popularSeries;
     }
     final seen = <String>{};
     return raw.where((e) => seen.add(e.url)).toList();
@@ -318,9 +324,11 @@ class _GridScreenState extends ConsumerState<GridScreen> {
       _scrollToNavRow(widget.nav.contentRow);
     });
 
-    final isAnime = widget.kind == GridKind.anime;
-    final eyebrow = isAnime ? 'ANIME-KATALOG' : 'SERIEN-KATALOG';
-    final headline = isAnime ? 'Alle Anime' : 'Alle Serien';
+    final (eyebrow, headline) = switch (widget.kind) {
+      GridKind.anime => ('ANIME-KATALOG', 'Alle Anime'),
+      GridKind.movies => ('FILME-KATALOG', 'Alle Filme'),
+      GridKind.series => ('SERIEN-KATALOG', 'Alle Serien'),
+    };
     final count = _sort == _Sort.all ? _allTotal : gridRows.fold(0, (s, r) => s + r.items.length);
 
     return loading

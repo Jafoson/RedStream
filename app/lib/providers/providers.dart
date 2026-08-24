@@ -128,6 +128,7 @@ class BrowseState {
   final List<SeriesResult> popularAnimes;
   final List<SeriesResult> newSeries;
   final List<SeriesResult> popularSeries;
+  final List<SeriesResult> popularMovies;
   final bool loading;
   final String? error;
 
@@ -136,6 +137,7 @@ class BrowseState {
     this.popularAnimes = const [],
     this.newSeries = const [],
     this.popularSeries = const [],
+    this.popularMovies = const [],
     this.loading = false,
     this.error,
   });
@@ -145,6 +147,7 @@ class BrowseState {
     List<SeriesResult>? popularAnimes,
     List<SeriesResult>? newSeries,
     List<SeriesResult>? popularSeries,
+    List<SeriesResult>? popularMovies,
     bool? loading,
     String? error,
   }) =>
@@ -153,6 +156,7 @@ class BrowseState {
         popularAnimes: popularAnimes ?? this.popularAnimes,
         newSeries: newSeries ?? this.newSeries,
         popularSeries: popularSeries ?? this.popularSeries,
+        popularMovies: popularMovies ?? this.popularMovies,
         loading: loading ?? this.loading,
         error: error,
       );
@@ -177,12 +181,14 @@ class BrowseNotifier extends StateNotifier<BrowseState> {
         _api.getPopularAnimes(),
         _api.getNewSeries(),
         _api.getPopularSeries(),
+        _api.getPopularMovies(),
       ]);
       state = BrowseState(
         newAnimes: results[0],
         popularAnimes: results[1],
         newSeries: results[2],
         popularSeries: results[3],
+        popularMovies: results[4],
         loading: false,
       );
     } catch (e) {
@@ -253,14 +259,16 @@ class SearchNotifier extends StateNotifier<SearchState> {
       try {
         final List<SeriesResult> results;
         if (state.site == 'both') {
-          // Search aniworld + s.to in parallel; aniworld takes priority on duplicates
-          final pair = await Future.wait([
+          // Search aniworld + sto + megakino in parallel; aniworld takes
+          // priority on duplicates, then sto, then megakino.
+          final trio = await Future.wait([
             _api.search(query.trim(), site: 'aniworld'),
             _api.search(query.trim(), site: 'sto'),
+            _api.search(query.trim(), site: 'megakino'),
           ]);
           final seen = <String>{};
           final merged = <SeriesResult>[];
-          for (final r in [...pair[0], ...pair[1]]) {
+          for (final r in [...trio[0], ...trio[1], ...trio[2]]) {
             final key = r.title.trim().toLowerCase();
             if (seen.add(key)) merged.add(r);
           }

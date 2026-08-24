@@ -130,6 +130,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             return GridScreen(key: const ValueKey('serien'), nav: _nav, kind: GridKind.series, onSelect: _openDetail);
           case NavScreen.anime:
             return GridScreen(key: const ValueKey('anime'), nav: _nav, kind: GridKind.anime, onSelect: _openDetail);
+          case NavScreen.filme:
+            return GridScreen(key: const ValueKey('filme'), nav: _nav, kind: GridKind.movies, onSelect: _openDetail);
           case NavScreen.search:
             return SearchScreen(nav: _nav, onSelect: _openDetail);
           case NavScreen.queue:
@@ -331,6 +333,7 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
       state.popularAnimes,
       state.newSeries,
       state.popularSeries,
+      state.popularMovies,
     ];
 
     // Nav row layout:
@@ -517,6 +520,17 @@ class _HomeContentState extends ConsumerState<_HomeContent> {
                 title: 'Beliebte Serien',
                 rowIndex: browseOff + 3,
                 items: state.popularSeries,
+                nav: widget.nav,
+                onSelect: widget.onSelect,
+              ),
+            ),
+          if (state.popularMovies.isNotEmpty)
+            KeyedSubtree(
+              key: _rowKeys.putIfAbsent(browseOff + 4, GlobalKey.new),
+              child: RsRail(
+                title: 'Beliebte Filme',
+                rowIndex: browseOff + 4,
+                items: state.popularMovies,
                 nav: widget.nav,
                 onSelect: widget.onSelect,
               ),
