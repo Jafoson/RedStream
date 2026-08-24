@@ -15,8 +15,14 @@ services:
       # volume loses all of them.
       - redstream-data:/home/aniworld/.aniworld
     environment:
-      # ── API-only mode (disables the browser UI, exposes only /api/* routes) ─
+      # ── API-only mode (disables the legacy browser dashboard; the Flutter
+      #    web app at http://<host>:8080/app/ still works, it only needs the
+      #    /api/* routes) ────────────────────────────────────────────────────
       ANIWORLD_API_ONLY: "1"
+
+      # ── Flutter web app (baked into the image at build time, see Dockerfile) ─
+      # Set to "0" to turn /app/ and its approval API off entirely.
+      ANIWORLD_ENABLE_WEBAPP: "1"
 
       # ── Authentication ────────────────────────────────────────────────────
       # Always enable auth when running on a server.
@@ -25,6 +31,15 @@ services:
       # !! Change these before exposing the service publicly !!
       ANIWORLD_WEB_ADMIN_USER: "admin"
       ANIWORLD_WEB_ADMIN_PASS: "changeme"
+      # The Flutter web app (/app/) never shows this login form — a browser
+      # that opens it has to be approved from the server terminal instead:
+      #   docker compose exec redstream aniworld --web-requests   # list pending
+      #   docker compose exec redstream aniworld --web-approve <ID>
+      #   docker compose exec redstream aniworld --web-deny <ID>
+      #   docker compose exec redstream aniworld --web-revoke <ID>
+      # Approved browsers are logged in as the admin account above and stay
+      # logged in (long-lived token) until revoked. Desktop/Android/TV builds
+      # of the app are unaffected and keep using the normal login form.
 
       # ── Download settings ─────────────────────────────────────────────────
       ANIWORLD_LANGUAGE: "German Dub"          # German Dub | English Sub | German Sub | English Dub
@@ -33,6 +48,9 @@ services:
       ANIWORLD_VIDEO_CODEC: "copy"             # copy | h264 | h265 | av1
       ANIWORLD_LANG_SEPARATION: "0"            # 1 = separate into german-dub/, english-sub/ subfolders
       ANIWORLD_DISABLE_ENGLISH_SUB: "0"
+      # Max downloads running at once, across all profiles. Each profile gets
+      # its own effective queue (parallel across profiles, serial within one).
+      ANIWORLD_MAX_CONCURRENT_DOWNLOADS: "3"
 
       # ── Other settings (uncomment to customise) ───────────────────────────
       # A copy with every option documented is in src/aniworld/.env.example.

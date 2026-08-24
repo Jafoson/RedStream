@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_service.dart';
+import '../models/models.dart';
 import '../providers/providers.dart';
 import '../widgets/tv_focusable.dart';
 import 'player_screen.dart';
@@ -273,7 +274,8 @@ class _DownloadPlayScreenState extends ConsumerState<DownloadPlayScreen> {
         : null;
     if (item != null) _hasEverFoundItem = true;
 
-    final ffmpeg = queueState.ffmpeg;
+    final ffmpeg = (queueId != null ? queueState.ffmpegByItem[queueId] : null) ??
+        FfmpegProgress.empty;
     final status = item?.status ?? 'queued';
     final isRunning = status == 'running';
     final isFailed = item?.isFailed ?? false;

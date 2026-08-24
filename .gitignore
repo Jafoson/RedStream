@@ -7,6 +7,10 @@ __pycache__/
 # C extensions
 *.so
 
+# Flutter web build output, copied here for the backend to serve at /app/
+# (see `flutter build web --base-href /app/` in DOCKER.md / README)
+src/aniworld/web/flutter_web/
+
 # Distribution / packaging
 .Python
 build/

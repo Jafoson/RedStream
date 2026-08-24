@@ -130,13 +130,6 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
           ),
         ),
 
-        // ── FFmpeg live progress ────────────────────────────────────────
-        if (state.ffmpeg.active)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(32, 20, 32, 0),
-            child: _FfmpegBanner(progress: state.ffmpeg),
-          ),
-
         const SizedBox(height: 16),
 
         // ── Queue list ──────────────────────────────────────────────────
@@ -163,8 +156,8 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                           style: tt.titleMedium
                               ?.copyWith(color: Colors.white54)),
                       const SizedBox(height: 8),
-                      ...active.map((item) =>
-                          _buildItem(context, item, notifier, navRowFor(item))),
+                      ...active.map((item) => _buildItem(context, item, notifier,
+                          navRowFor(item), state.ffmpegByItem[item.id])),
                       const SizedBox(height: 24),
                     ],
                     if (hasCompleted) ...[
@@ -172,8 +165,8 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                           style: tt.titleMedium
                               ?.copyWith(color: Colors.white54)),
                       const SizedBox(height: 8),
-                      ...completed.map((item) =>
-                          _buildItem(context, item, notifier, navRowFor(item))),
+                      ...completed.map((item) => _buildItem(
+                          context, item, notifier, navRowFor(item), null)),
                     ],
                   ],
                 ),
@@ -183,7 +176,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
   }
 
   Widget _buildItem(BuildContext context, QueueItem item,
-      QueueNotifier notifier, int navRow) {
+      QueueNotifier notifier, int navRow, FfmpegProgress? ffmpeg) {
     Color statusColor;
     IconData statusIcon;
     if (item.isDone) {
@@ -268,7 +261,10 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                               .withValues(alpha: isFoc ? 1.0 : 0.6)),
                   ],
                 ),
-                if (item.isActive && item.progress > 0) ...[
+                if (item.isActive && ffmpeg != null && ffmpeg.active) ...[
+                  const SizedBox(height: 10),
+                  _FfmpegBanner(progress: ffmpeg),
+                ] else if (item.isActive && item.progress > 0) ...[
                   const SizedBox(height: 10),
                   LinearProgressIndicator(
                     value: item.progress / 100,

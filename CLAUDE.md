@@ -61,9 +61,11 @@ Episode properties (`stream_url`, `_episode_path`, `provider_data`, …) are all
 
 **Output format**: `.m3u8` playlist + `_NNN.ts` segments (4 s each, `independent_segments`, `vod` playlist type). The `.m3u8` path is derived from `self._episode_path` (which itself comes from `NAMING_TEMPLATE`).
 
-`_run_ffmpeg_with_progress()` spawns FFmpeg as a subprocess, reads stderr byte-by-byte via a reader thread, and parses progress lines. It exposes a thread-safe `_ffmpeg_progress` dict (consumed by the web UI via `get_ffmpeg_progress()`). Stall detection kills the process after 600 s of no progress.
+`_run_ffmpeg_with_progress()` spawns FFmpeg as a subprocess, reads stderr byte-by-byte via a reader thread, and parses progress lines. Progress is tracked **per download**, not globally: `bind_progress_to_queue_item(queue_id)` binds the calling thread to a bucket in `_ffmpeg_progress_by_item`, so several concurrent downloads (see below) don't clobber each other's numbers; `get_ffmpeg_progress()` returns either one item's snapshot or the whole `{queue_id: progress}` map. Stall detection kills the process after 60 s of no progress.
 
 Provider attempt order: selected provider first, then fallback order from `ANIWORLD_PROVIDER_FALLBACK_ORDER`. `build_provider_attempt_order()` in `config.py` handles deduplication.
+
+**Queue worker pool** (`web/download_worker.py`): a pool of `ANIWORLD_MAX_CONCURRENT_DOWNLOADS` (default 3) threads pulls from `download_queue` (`web/db.py`). Each queued item belongs to a *bucket* — its `profile_id`, or a shared `"_autosync"` bucket for items with no profile (auto-sync-queued). A worker thread only claims an item whose bucket isn't already downloading something, so each profile effectively gets its own serial pipeline while different profiles can download in parallel, up to the pool cap. Priority (0=watch-intent, 1=prefetch, 2=manual, 3=autosync) decides pick order among eligible items; a P0 watch-intent still preempts a running P1 prefetch **in the same bucket** (`maybe_preempt_for_p0()`), requeueing it. Cancellation goes through `db.request_cancel(queue_id, force=...)` + `cancel_flags()`: a still-`queued` item is cancelled outright, a `running` one is flagged and the worker notices between episodes (soft) or has its thread's ffmpeg process killed via `kill_active_ffmpeg(thread_id=...)` (force). `web/worker.py` is an unrelated, unwired leftover from the last upstream merge (see Branch note) — don't use it; `web/app.py`'s old two-slot express/normal system was replaced by this pool.
 
 ### Extractor layer (`src/aniworld/extractors/`)
 
@@ -127,8 +129,14 @@ Flask app served by Waitress. Templates and static files are in `web/templates/`
 | `-wA` / `--web-auth` | Enable local auth |
 | `-wS` / `--web-sso` | Enable OIDC/SSO login |
 | `-wFS` / `--web-force-sso` | Force SSO-only (implies `--web-auth` + `--web-sso`) |
+| `--web-requests` | List Flutter-web access requests and exit |
+| `--web-approve <id>` | Approve a pending web-app access request and exit |
+| `--web-deny <id>` | Deny a pending web-app access request and exit |
+| `--web-revoke <id>` | Revoke a previously approved web-app access request and exit |
 
 The web UI polls `get_ffmpeg_progress()` for live download progress.
+
+**Flutter web build & device approval** (`web/webapp_auth.py`): The Flutter app also builds for web (`flutter build web --base-href /app/`), copied into `web/flutter_web/` at image build time and served same-origin by Flask under `/app/`. Baked into the image unconditionally; `ANIWORLD_ENABLE_WEBAPP` (default `1`) is a runtime on/off switch — set to `0` to fully unregister `/app/` and the `/api/webapp/*` blueprint. It is independent of `--web-auth`/`--web-sso` and never shows a username/password form: a browser without a token calls `POST /api/webapp/request-access`, gets a `device_id`, and polls `GET /api/webapp/request-access/<device_id>` until an admin approves it from the server terminal (`--web-requests` / `--web-approve <id>` / `--web-deny <id>` / `--web-revoke <id>`, backed by the `web_access_requests` table in `web/db.py`). Approval logs the browser in as the (first) admin account and issues a normal bearer token via the existing `api_tokens` mechanism — revoking just deletes that token. Desktop/Android/TV builds are untouched and keep using `LoginScreen`/`SetupScreen`; only `kIsWeb` branches in `main.dart` (`_resolveInitScreen`) route to `WebAccessScreen` instead, and the web build always uses `Uri.base.origin` rather than a user-entered server URL.
 
 ### Anime4K (`src/aniworld/anime4k/`)
 
@@ -148,7 +156,9 @@ Android TV client built with Flutter (Dart SDK ^3.12.0), displayed under the app
 
 **Architecture**: Riverpod for state management, Dio for HTTP. On first launch shows `SetupScreen` to save the backend server URL into `shared_preferences`. All subsequent API calls go through `ApiService` (wraps Dio, routes image URLs through `/api/proxy-image`).
 
-**Screens**: Home, Search, Grid, Detail (series metadata), Episodes, Player (ExoPlayer/native HLS via `video_player`), Queue, Library, Settings.
+**Screens**: Home, Search, Grid, Detail (series metadata), Episodes, Player (ExoPlayer/native HLS via `video_player`), Queue, Library, Settings, and `WebAccessScreen` (web build only — see below).
+
+**Web build**: also targets the browser (`app/web/`). Unlike desktop/Android/TV, the web build skips `SetupScreen`/`LoginScreen` entirely — it is always same-origin (`Uri.base.origin`) and gated by the server-terminal approval flow in `WebAccessScreen` instead of a password. See "Flutter web build & device approval" under Web UI below.
 
 **Backend integration**: The Flutter app is a thin client that talks exclusively to the Python web UI REST API. It does not talk to aniworld.to directly. Key endpoints it consumes: `/api/search`, `/api/series`, `/api/seasons`, `/api/episodes`, `/api/providers`, `/api/download`, `/api/queue`, `/api/stream`, `/api/library`, `/api/settings`, `/api/proxy-image`.
 
@@ -194,3 +204,13 @@ To add/disable individual tools use `--enable` / `--disable` flags (see `dart mc
 ### Branch note
 
 The active development branch is `models`. The `NAMING_TEMPLATE` and all fallback extensions in episode models use `.m3u8` (not `.mkv`) — the final download artefact is an HLS bundle, not a single container file.
+
+### Upstream-merge leftovers (do not build on these)
+
+The `merge: sync with upstream phoenixthrush/AniWorld-Downloader (233 commits)` commit brought in upstream's parallel rewrite of the web layer, which this fork deliberately did not adopt (see that commit's message) because it would have broken every endpoint the Flutter app and this fork's own browser UI depend on. Left behind, unwired, and **incompatible with this fork's actual `web/db.py`** (they expect `db._initialized`, `db.QUEUE_STATUSES`, `db.cancel_flags`, `db.reset_stale_running`, none of which exist here):
+
+- `web/views/` (Flask blueprints, never registered in `create_app()`) and its templates/static assets (`queue.html`, `queue.js`, …).
+- `web/worker.py` — a single-item queue consumer; superseded by `web/download_worker.py` for the pool/profile-bucketed design. `autosync.py` used to call `worker.ensure_started()`, which crashed (see below) — that call was replaced with `download_worker.ensure_started()`.
+- `tests/test_worker.py`, `tests/test_db_queue.py`, `tests/test_api_queue.py`, `tests/test_theming.py`, and in fact **the entire pytest suite** (`tests/conftest.py`'s autouse `fresh_db` fixture does `monkeypatch.setattr(db, "_initialized", False)`, which fails for every test since that attribute doesn't exist) — this is a pre-existing, branch-wide breakage, not something any single feature session introduced. Fixing it means either adding the compatibility surface to `db.py` or rewriting `conftest.py` for this fork's actual init pattern; nobody has done either yet.
+
+If you're about to "finish" or extend `worker.py`/`views/`, stop — read this section first. Verify anything discovered here against current `git log`/`hasattr()` before trusting it; this note describes state as of the `eaf17ca` commit and may drift.

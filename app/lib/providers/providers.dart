@@ -301,26 +301,28 @@ class SearchNotifier extends StateNotifier<SearchState> {
 
 class QueueState {
   final List<QueueItem> items;
-  final FfmpegProgress ffmpeg;
+  // Keyed by queue item id — several downloads (one per profile) can be
+  // running at once, each with its own live ffmpeg progress.
+  final Map<int, FfmpegProgress> ffmpegByItem;
   final bool loading;
   final String? error;
 
   const QueueState({
     this.items = const [],
-    this.ffmpeg = FfmpegProgress.empty,
+    this.ffmpegByItem = const {},
     this.loading = false,
     this.error,
   });
 
   QueueState copyWith({
     List<QueueItem>? items,
-    FfmpegProgress? ffmpeg,
+    Map<int, FfmpegProgress>? ffmpegByItem,
     bool? loading,
     String? error,
   }) =>
       QueueState(
         items: items ?? this.items,
-        ffmpeg: ffmpeg ?? this.ffmpeg,
+        ffmpegByItem: ffmpegByItem ?? this.ffmpegByItem,
         loading: loading ?? this.loading,
         error: error,
       );
@@ -346,7 +348,11 @@ class QueueNotifier extends StateNotifier<QueueState> {
   Future<void> refresh() async {
     try {
       final data = await _api.getQueue();
-      state = state.copyWith(items: data.items, ffmpeg: data.ffmpeg, loading: false);
+      state = state.copyWith(
+        items: data.items,
+        ffmpegByItem: data.ffmpegByItem,
+        loading: false,
+      );
     } catch (e) {
       state = state.copyWith(loading: false, error: e.toString());
     }

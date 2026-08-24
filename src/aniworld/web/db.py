@@ -271,6 +271,163 @@ def delete_api_token(token):
         conn.close()
 
 
+# ===== Web-App Access Requests =====
+# Gates the Flutter *web* build behind an out-of-band approval: a browser that
+# has no token yet asks for access, and an admin approves/denies it from the
+# server terminal (`aniworld --web-requests` / `--web-approve` / `--web-deny`
+# / `--web-revoke`). This is independent of the dashboard's own username/
+# password or SSO login — the desktop/TV app never touches this table.
+
+_CREATE_WEB_ACCESS_REQUESTS_TABLE = """\
+CREATE TABLE IF NOT EXISTS web_access_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL UNIQUE,
+    ip_address TEXT,
+    user_agent TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'approved', 'denied', 'revoked')),
+    token TEXT,
+    requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+    decided_at TEXT
+);
+"""
+
+
+def init_web_access_requests_db():
+    ANIWORLD_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    conn = get_db()
+    try:
+        conn.execute(_CREATE_WEB_ACCESS_REQUESTS_TABLE)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def create_web_access_request(device_id, ip_address, user_agent):
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO web_access_requests (device_id, ip_address, user_agent) "
+            "VALUES (?, ?, ?)",
+            (device_id, ip_address, user_agent),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_web_access_request(device_id):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM web_access_requests WHERE device_id = ?", (device_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_web_access_requests(status=None):
+    conn = get_db()
+    try:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM web_access_requests WHERE status = ? ORDER BY id DESC",
+                (status,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM web_access_requests ORDER BY id DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def approve_web_access_request(request_id):
+    """Approve a pending request, log it in as the (first) admin account.
+
+    Returns (ok, error, info) where info is {"token", "username"} on success.
+    """
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM web_access_requests WHERE id = ?", (request_id,)
+        ).fetchone()
+        if not row:
+            return False, "Request not found.", None
+        if row["status"] != "pending":
+            return False, f"Request is already {row['status']}.", None
+        admin = conn.execute(
+            "SELECT id, username FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
+        ).fetchone()
+        if not admin:
+            return False, (
+                "No admin account exists yet. Complete the web UI setup "
+                "(--web-auth) or set ANIWORLD_WEB_ADMIN_USER/ANIWORLD_WEB_ADMIN_PASS first."
+            ), None
+    finally:
+        conn.close()
+
+    token = create_api_token(admin["id"])
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE web_access_requests SET status = 'approved', token = ?, "
+            "decided_at = datetime('now') WHERE id = ?",
+            (token, request_id),
+        )
+        conn.commit()
+        return True, None, {"token": token, "username": admin["username"]}
+    finally:
+        conn.close()
+
+
+def deny_web_access_request(request_id):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT status FROM web_access_requests WHERE id = ?", (request_id,)
+        ).fetchone()
+        if not row:
+            return False, "Request not found."
+        if row["status"] != "pending":
+            return False, f"Request is already {row['status']}."
+        conn.execute(
+            "UPDATE web_access_requests SET status = 'denied', "
+            "decided_at = datetime('now') WHERE id = ?",
+            (request_id,),
+        )
+        conn.commit()
+        return True, None
+    finally:
+        conn.close()
+
+
+def revoke_web_access_request(request_id):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT status, token FROM web_access_requests WHERE id = ?", (request_id,)
+        ).fetchone()
+        if not row:
+            return False, "Request not found."
+        if row["status"] != "approved":
+            return False, "Only approved requests can be revoked."
+        conn.execute(
+            "UPDATE web_access_requests SET status = 'revoked' WHERE id = ?",
+            (request_id,),
+        )
+        conn.commit()
+        token = row["token"]
+    finally:
+        conn.close()
+    if token:
+        delete_api_token(token)
+    return True, None
+
+
 # ===== Download Queue =====
 
 _CREATE_QUEUE_TABLE = """\
@@ -339,6 +496,30 @@ def init_queue_db():
             )
         except Exception:
             pass
+        # Add profile_id column (migration for existing DBs). NULL means
+        # "not tied to a profile" (autosync and anything queued before this
+        # column existed) — those share one pool bucket instead of each
+        # getting their own concurrent slot. See web/worker.py.
+        try:
+            conn.execute("ALTER TABLE download_queue ADD COLUMN profile_id INTEGER")
+        except Exception:
+            pass  # column already exists
+        # Add cancel_requested/force_cancel columns (migration for existing DBs).
+        # Sitting behind a running item so the worker thread can notice a stop
+        # request between episodes (soft) or have its ffmpeg process killed
+        # immediately (force) — see db.request_cancel()/cancel_flags().
+        try:
+            conn.execute(
+                "ALTER TABLE download_queue ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass  # column already exists
+        try:
+            conn.execute(
+                "ALTER TABLE download_queue ADD COLUMN force_cancel INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass  # column already exists
         conn.commit()
     finally:
         conn.close()
@@ -354,6 +535,7 @@ def add_to_queue(
     custom_path_id=None,
     source="manual",
     priority=None,
+    profile_id=None,
 ):
     import json
 
@@ -368,8 +550,8 @@ def add_to_queue(
     try:
         cur = conn.execute(
             "INSERT INTO download_queue "
-            "(title, series_url, episodes, total_episodes, language, provider, username, custom_path_id, source, priority) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(title, series_url, episodes, total_episodes, language, provider, username, custom_path_id, source, priority, profile_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 title,
                 series_url,
@@ -381,6 +563,7 @@ def add_to_queue(
                 custom_path_id,
                 source,
                 priority,
+                profile_id,
             ),
         )
         row_id = cur.lastrowid
@@ -457,25 +640,20 @@ def get_next_queued():
         conn.close()
 
 
-def get_next_queued_for_slot(slot):
-    """Return the next item for the given download slot.
+def get_queued_items_by_priority():
+    """All 'queued' items, highest priority (lowest number) and oldest first.
 
-    slot='express' → priority 0 (watch-intent) or 1 (prefetch)
-    slot='normal'  → priority 2 (manual) or 3 (autosync)
+    Used by the download-worker pool to pick the next item for a free slot —
+    it walks this list in order and takes the first one whose profile isn't
+    already downloading something (see web/download_worker.py).
     """
     conn = get_db()
     try:
-        if slot == "express":
-            row = conn.execute(
-                "SELECT * FROM download_queue WHERE status = 'queued' AND priority <= 1 "
-                "ORDER BY priority ASC, position ASC, id ASC LIMIT 1"
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT * FROM download_queue WHERE status = 'queued' AND priority >= 2 "
-                "ORDER BY priority ASC, position ASC, id ASC LIMIT 1"
-            ).fetchone()
-        return dict(row) if row else None
+        rows = conn.execute(
+            "SELECT * FROM download_queue WHERE status = 'queued' "
+            "ORDER BY priority ASC, position ASC, id ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 
@@ -542,6 +720,82 @@ def get_running():
             "SELECT * FROM download_queue WHERE status = 'running' LIMIT 1"
         ).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_running_items():
+    """All currently-running items (plural — several can run at once)."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM download_queue WHERE status = 'running'"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def request_cancel(queue_id, force=False):
+    """Ask a queued or running item to stop.
+
+    A 'queued' item hasn't started yet — nothing to signal, it's just
+    cancelled outright. A 'running' item is flagged instead, so its worker
+    thread notices between episodes (soft, force=False) or has its ffmpeg
+    process killed immediately (force=True — the caller still has to look
+    up and kill the process itself, this only flags the item).
+    """
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT status FROM download_queue WHERE id = ?", (queue_id,)
+        ).fetchone()
+        if not row:
+            return False, "Item not found"
+        if row["status"] == "queued":
+            conn.execute(
+                "UPDATE download_queue SET status = 'cancelled' WHERE id = ?",
+                (queue_id,),
+            )
+            conn.commit()
+            return True, None
+        if row["status"] != "running":
+            return False, "Can only cancel a queued or running item"
+        conn.execute(
+            "UPDATE download_queue SET cancel_requested = 1, force_cancel = ? WHERE id = ?",
+            (1 if force else 0, queue_id),
+        )
+        conn.commit()
+        return True, None
+    finally:
+        conn.close()
+
+
+def cancel_flags(queue_id):
+    """Return (cancel_requested, force_cancel) for *queue_id* — both False if unknown."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT cancel_requested, force_cancel FROM download_queue WHERE id = ?",
+            (queue_id,),
+        ).fetchone()
+        if not row:
+            return False, False
+        return bool(row["cancel_requested"]), bool(row["force_cancel"])
+    finally:
+        conn.close()
+
+
+def reset_stale_running():
+    """Requeue anything left 'running' from a previous process (crash/restart)."""
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE download_queue SET status = 'queued', cancel_requested = 0, "
+            "force_cancel = 0 WHERE status = 'running'"
+        )
+        conn.execute("UPDATE download_queue SET captcha_url = NULL")
+        conn.commit()
     finally:
         conn.close()
 

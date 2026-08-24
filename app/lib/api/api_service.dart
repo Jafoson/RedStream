@@ -59,6 +59,24 @@ class ApiService {
     } catch (_) {}
   }
 
+  // ── Web-app access request (Flutter web build only) ────────────────────────
+  /// Registers this browser as pending and returns its device_id.
+  Future<String> requestWebAccess() async {
+    final resp = await _dio.post<Map<String, dynamic>>('/api/webapp/request-access');
+    return resp.data?['device_id'] as String? ?? '';
+  }
+
+  /// Polls the status of a previously created request. `token` is set once
+  /// an admin has approved it from the server terminal.
+  Future<({String status, String? token})> pollWebAccess(String deviceId) async {
+    final resp = await _dio.get<Map<String, dynamic>>('/api/webapp/request-access/$deviceId');
+    final data = resp.data ?? {};
+    return (
+      status: data['status'] as String? ?? 'pending',
+      token: data['token'] as String?,
+    );
+  }
+
   // ── Proxy helper ────────────────────────────────────────────────────────
   /// Routes external poster URLs through the backend proxy so they load on TV.
   String proxyImage(String url) {
@@ -216,14 +234,18 @@ class ApiService {
     return resp.data?['queue_id'] as int? ?? 0;
   }
 
-  Future<({List<QueueItem> items, FfmpegProgress ffmpeg})> getQueue() async {
+  /// [ffmpegByItem] is keyed by queue item id — several downloads can be
+  /// running at once (one per profile, see the server's download_worker),
+  /// each with its own live ffmpeg progress.
+  Future<({List<QueueItem> items, Map<int, FfmpegProgress> ffmpegByItem})> getQueue() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/queue');
     final rawItems = resp.data?['items'] as List? ?? [];
     final items = rawItems.map((e) => QueueItem.fromJson(e as Map<String, dynamic>)).toList();
-    final progress = FfmpegProgress.fromJson(
-      resp.data?['ffmpeg_progress'] as Map<String, dynamic>? ?? {},
+    final rawProgress = resp.data?['ffmpeg_progress'] as Map<String, dynamic>? ?? {};
+    final ffmpegByItem = rawProgress.map(
+      (k, v) => MapEntry(int.parse(k), FfmpegProgress.fromJson(v as Map<String, dynamic>)),
     );
-    return (items: items, ffmpeg: progress);
+    return (items: items, ffmpegByItem: ffmpegByItem);
   }
 
   /// Returns the ID of an existing queued/running item that contains [episodeUrl],

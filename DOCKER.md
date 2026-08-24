@@ -106,6 +106,7 @@ No config file needs to be edited inside the container.
 | `ANIWORLD_VIDEO_CODEC` | `copy` | `copy` / `h264` / `h265` / `av1` |
 | `ANIWORLD_LANG_SEPARATION` | `0` | `1` = separate downloads into language subfolders |
 | `ANIWORLD_DISABLE_ENGLISH_SUB` | `0` | `1` = block all English Sub downloads |
+| `ANIWORLD_MAX_CONCURRENT_DOWNLOADS` | `3` | Max downloads running at once, across all profiles. Each profile gets its own queue — parallel across profiles, serial within one |
 | `ANIWORLD_SYNC_SCHEDULE` | `0` | Auto-sync interval: `0` / `1min` / `1h` / `4h` / `24h` … |
 | `ANIWORLD_SYNC_LANGUAGE` | `German Dub` | Language for auto-synced episodes |
 | `ANIWORLD_TMDB_TOKEN` | — | **Required** for thumbnails/posters. Get it at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) |
@@ -223,6 +224,76 @@ ANIWORLD_WEB_FORCE_SSO: "1"
 4. Log in with your admin credentials (or any user account created in Settings → Users).
 
 > The app stores a Bearer token in local storage. Tokens persist until you log out or the account is deleted server-side.
+
+---
+
+## Web App Setup
+
+RedStream also ships as a web build, served by the backend itself at `/app/` —
+no separate container or backend URL to configure. It is baked into the image
+at build time (see "Building the image yourself" below); until a new image
+including it is published to `ghcr.io/jafoson/aniworld-downloader`, you need
+to build it yourself once.
+
+```
+http://<your-server-ip>:8080/app/
+```
+
+Turn it off with `ANIWORLD_ENABLE_WEBAPP: "0"` in `docker-compose.yaml` if you
+don't want `/app/` or its approval API reachable at all — no rebuild needed,
+it's a runtime setting.
+
+The web build has **no username/password form**. A browser that opens it is
+put in a pending state and has to be approved from the server terminal:
+
+```bash
+docker compose exec redstream aniworld --web-requests      # list pending/approved/denied
+docker compose exec redstream aniworld --web-approve <ID>  # let this browser in
+docker compose exec redstream aniworld --web-deny <ID>     # reject it
+docker compose exec redstream aniworld --web-revoke <ID>   # log an already-approved browser out
+```
+
+`--web-approve` requires an admin account to already exist (`ANIWORLD_WEB_ADMIN_USER`
+/ `ANIWORLD_WEB_ADMIN_PASS` above, or one created via the setup page) — an
+approved browser is logged in as that admin. Approval is remembered per
+browser (a long-lived token, same mechanism as `/api/auth/login`) until you
+run `--web-revoke`.
+
+This is independent of `ANIWORLD_WEB_AUTH`/`ANIWORLD_WEB_SSO`: the web build
+always requires terminal approval, even if the legacy dashboard's own login
+is disabled. The Android TV / desktop app above is unaffected and keeps using
+the normal login form.
+
+### Building the image yourself
+
+Plain `docker build` works from a checkout of this repo, no `docker-compose.yaml`
+needed — the Flutter web build is included automatically as part of the image:
+
+```bash
+git clone https://github.com/phoenixthrush/AniWorld-Downloader.git redstream
+cd redstream
+docker build -t redstream:local .
+```
+
+Then either run it directly:
+
+```bash
+docker run -d --name redstream -p 8080:8080 \
+  -v ./downloads:/app/Downloads \
+  -v redstream-data:/home/aniworld/.aniworld \
+  -e ANIWORLD_API_ONLY=1 -e ANIWORLD_WEB_AUTH=1 \
+  -e ANIWORLD_WEB_ADMIN_USER=admin -e ANIWORLD_WEB_ADMIN_PASS=changeme \
+  redstream:local
+```
+
+or point `docker-compose.yaml` at it (`image: redstream:local`, or `build: .`
+to have Compose build it for you — see "Updating" below) and `docker compose up -d`
+as usual. Either way, `ANIWORLD_ENABLE_WEBAPP` (default `1`) is what decides at
+*runtime* whether `/app/` is actually served — the build always includes it.
+
+The first build pulls `ghcr.io/cirruslabs/flutter:stable` (a few GB) to compile
+the web frontend, so it's slower than before; subsequent builds reuse Docker's
+layer cache and are fast again unless `app/` changed.
 
 ---
 

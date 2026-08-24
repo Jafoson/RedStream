@@ -1,4 +1,3 @@
-import 'dart:ffi' show Abi;
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
@@ -7,6 +6,8 @@ import 'package:flutter/foundation.dart' show compute;
 import 'package:open_file/open_file.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+
+import 'arch_detect_io.dart' if (dart.library.js_interop) 'arch_detect_stub.dart';
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
@@ -120,8 +121,8 @@ class UpdateService {
       downloadUrl = release.macosDownloadUrl;
       fileName = 'rs_update_${release.version}.zip';
     } else if (Platform.isAndroid) {
-      final isArm32 = Abi.current() == Abi.androidArm;
-      downloadUrl = isArm32
+      final arm32 = isArm32();
+      downloadUrl = arm32
           ? (release.androidArm32DownloadUrl ?? release.androidArm64DownloadUrl)
           : (release.androidArm64DownloadUrl ?? release.androidArm32DownloadUrl);
       fileName = 'rs_update_${release.version}.apk';

@@ -74,6 +74,7 @@ aniworld = [
   "web/templates/*.html",
   "web/static/*.css",
   "web/static/*.js",
+  "web/flutter_web/**/*",
   "browsers.jsonl",
 ]
 

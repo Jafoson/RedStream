@@ -410,26 +410,90 @@ def _resolve_stream_url_with_fallback(self, action_name):
     raise RuntimeError(f"{action_name} failed: no providers available")
 
 
-# Thread-safe global for current ffmpeg download progress (used by web UI)
-_ffmpeg_progress_lock = threading.Lock()
-_ffmpeg_progress = {
-    "percent": 0.0,
-    "time": "",
-    "speed": "",
-    "bandwidth": "",
-    "active": False,
-}
+# Thread-safe global for current ffmpeg download progress (used by web UI).
+# RLock (not Lock) because several call sites below already hold this lock
+# while reading _ffmpeg_progress.get(...) before calling .update(...).
+_ffmpeg_progress_lock = threading.RLock()
+_ffmpeg_progress_by_item: dict = {}
 
-# Per-thread FFmpeg process registry (thread_id → Popen) so both download
-# slots can run simultaneously and be killed independently.
+# Which queue item (if any) the *current thread* is downloading for. Lets the
+# many `_ffmpeg_progress.update(...)`/`.get(...)` call sites further down
+# stay untouched while still tracking each concurrent download separately —
+# see bind_progress_to_queue_item().
+_ffmpeg_local = threading.local()
+
+
+def _default_progress():
+    return {"percent": 0.0, "time": "", "speed": "", "bandwidth": "", "active": False}
+
+
+class _PerItemProgress:
+    """Drop-in stand-in for the old single global progress dict.
+
+    Existing code calls `_ffmpeg_progress.update({...})` / `.get(key, default)`
+    the same way it always has; this just routes those calls to whichever
+    queue item the calling thread is currently bound to (or a shared `None`
+    bucket for CLI use outside the web queue), so multiple concurrent
+    downloads no longer overwrite each other's numbers.
+    """
+
+    def _bucket(self):
+        key = getattr(_ffmpeg_local, "queue_id", None)
+        return _ffmpeg_progress_by_item.setdefault(key, _default_progress())
+
+    def update(self, other=None, **kwargs):
+        with _ffmpeg_progress_lock:
+            bucket = self._bucket()
+            if other:
+                bucket.update(other)
+            if kwargs:
+                bucket.update(kwargs)
+
+    def get(self, key, default=None):
+        with _ffmpeg_progress_lock:
+            return self._bucket().get(key, default)
+
+
+_ffmpeg_progress = _PerItemProgress()
+
+# Per-thread FFmpeg process registry (thread_id → Popen) so multiple
+# downloads can run simultaneously and be killed independently.
 _active_ffmpeg_procs: dict = {}
 _active_ffmpeg_procs_lock = _threading.Lock()
 
 
-def get_ffmpeg_progress():
-    """Return a snapshot of the current ffmpeg download progress."""
+def bind_progress_to_queue_item(queue_id):
+    """Bind the calling thread's ffmpeg progress updates to *queue_id*.
+
+    Call this right before starting a queued download so its progress is
+    tracked separately from any other download running at the same time.
+    Pass None to release the binding (back to the shared/legacy bucket).
+    """
+    _ffmpeg_local.queue_id = queue_id
+
+
+def clear_progress(queue_id):
+    """Drop a finished item's progress entry so the dict doesn't grow forever."""
     with _ffmpeg_progress_lock:
-        return dict(_ffmpeg_progress)
+        _ffmpeg_progress_by_item.pop(queue_id, None)
+
+
+def get_ffmpeg_progress(queue_id=None):
+    """Return a snapshot of ffmpeg download progress.
+
+    With *queue_id*: that item's progress alone (a default if nothing has
+    reported yet). With no argument: every tracked *queued item's* progress
+    as {str(queue_id): {...}} — the CLI's own unbound (`None`-keyed) bucket
+    is excluded since it's not meaningful to the web UI.
+    """
+    with _ffmpeg_progress_lock:
+        if queue_id is not None:
+            return dict(_ffmpeg_progress_by_item.get(queue_id, _default_progress()))
+        return {
+            str(k): dict(v)
+            for k, v in _ffmpeg_progress_by_item.items()
+            if k is not None
+        }
 
 
 def kill_active_ffmpeg(thread_id: Optional[int] = None):

@@ -18,6 +18,7 @@ from ..config import (
 from ..extractors import provider_functions
 from ..logger import get_logger
 from ..providers import resolve_provider
+from . import download_worker
 from ..search import (
     SERIES_GENRES,
     fetch_all_animes,
@@ -39,7 +40,6 @@ from .db import (
     add_custom_path,
     add_to_queue,
     add_to_watchlist,
-    cancel_queue_item,
     clear_completed,
     clear_series_language,
     create_api_token,
@@ -56,13 +56,10 @@ from .db import (
     get_custom_paths,
     get_episode_progress_for_urls,
     get_general_stats,
-    get_next_queued,
-    get_next_queued_for_slot,
     get_profiles,
     get_queue,
     get_queue_item,
     get_queue_stats,
-    get_running,
     get_series_language,
     get_sync_stats,
     get_watch_progress,
@@ -85,6 +82,7 @@ from .db import (
     remove_custom_path,
     remove_from_queue,
     remove_from_watchlist,
+    request_cancel,
     set_captcha_url,
     clear_captcha_url,
     set_queue_status,
@@ -270,17 +268,6 @@ _STO_SERIES_LINK_PATTERN = re.compile(
 )
 
 
-# Download slot state
-# Slot A (express): P0 watch-intent + P1 prefetch
-# Slot B (normal):  P2 manual     + P3 autosync
-_express_lock = threading.Lock()
-_normal_lock = threading.Lock()
-_express_worker_started = False
-_normal_worker_started = False
-_express_running_id = None        # queue item ID currently in express slot
-_express_worker_thread_id = None  # OS thread ident of the express worker
-_express_preempt_id = None        # item ID to preempt (P1 → make way for P0)
-
 # Auto-sync worker state
 _autosync_worker_started = False
 
@@ -326,224 +313,6 @@ def _fetch_public_ip():
             last_error = f"Invalid response: {exc}"
     raise RuntimeError(last_error or "Failed to resolve public IP")
 
-
-def _build_selected_path(item):
-    """Compute the output directory for a queue item (None = use default)."""
-    import os
-    from pathlib import Path
-
-    lang_sep = os.environ.get("ANIWORLD_LANG_SEPARATION", "0") == "1"
-    if item.get("source") == "sync:all_langs":
-        lang_sep = True
-
-    custom_path_id = item.get("custom_path_id")
-    base = None
-    if custom_path_id:
-        cp = get_custom_path_by_id(custom_path_id)
-        if cp:
-            base = Path(cp["path"]).expanduser()
-            if not base.is_absolute():
-                base = Path.home() / base
-
-    if base is None:
-        raw = os.environ.get("ANIWORLD_DOWNLOAD_PATH", "")
-        if raw:
-            base = Path(raw).expanduser()
-            if not base.is_absolute():
-                base = Path.home() / base
-        else:
-            base = Path.home() / "Downloads"
-
-    if lang_sep:
-        lang_folder_map = {
-            "German Dub": "german-dub",
-            "English Sub": "english-sub",
-            "German Sub": "german-sub",
-            "English Dub": "english-dub",
-        }
-        lang_folder = lang_folder_map.get(
-            item["language"], item["language"].lower().replace(" ", "-")
-        )
-        return str(base / lang_folder)
-    if custom_path_id:
-        return str(base)
-    return None
-
-
-def _run_queue_item(item, slot="normal"):
-    """Download all episodes for *item*. Returns True if item was preempted."""
-    global _express_preempt_id, _express_running_id
-
-    from ..models.common.common import kill_active_ffmpeg
-    from ..playwright import captcha as _captcha_mod
-
-    episodes = json.loads(item["episodes"])
-    errors = []
-    selected_path = _build_selected_path(item)
-    preempted = False
-
-    for i, ep_url in enumerate(episodes):
-        # Express slot: check if a P0 item arrived and wants to preempt this P1
-        if slot == "express" and _express_preempt_id == item["id"]:
-            logger.info(
-                "Preempted before episode %d for '%s' — requeueing", i, item["title"]
-            )
-            preempted = True
-            break
-
-        update_queue_progress(item["id"], i, ep_url)
-        try:
-            prov = resolve_provider(ep_url)
-            ep_kwargs = {
-                "url": ep_url,
-                "selected_language": item["language"],
-                "selected_provider": item["provider"],
-            }
-            if selected_path:
-                ep_kwargs["selected_path"] = selected_path
-            episode = prov.episode_cls(**ep_kwargs)
-            _captcha_mod._local.queue_id = item["id"]
-            try:
-                episode.download()
-            finally:
-                _captcha_mod._local.queue_id = None
-        except Exception as e:
-            _captcha_mod._local.queue_id = None
-            # Was FFmpeg killed due to preemption?
-            if slot == "express" and _express_preempt_id == item["id"]:
-                logger.info(
-                    "Preempted mid-episode for '%s' — requeueing", item["title"]
-                )
-                preempted = True
-                break
-            logger.error(f"Download failed for {ep_url}: {e}")
-            errors.append({"url": ep_url, "error": str(e)})
-            update_queue_errors(item["id"], json.dumps(errors))
-
-        if is_queue_cancelled(item["id"]):
-            logger.info(f"Download cancelled for queue item {item['id']}")
-            update_queue_progress(item["id"], i + 1, "")
-            return False
-
-    if preempted:
-        # Reset item so it's picked up again after P0 finishes
-        set_queue_status(item["id"], "queued")
-        update_queue_progress(item["id"], 0, "")
-        with _express_lock:
-            _express_preempt_id = None
-            _express_running_id = None
-        return True
-
-    if not is_queue_cancelled(item["id"]):
-        update_queue_progress(item["id"], len(episodes), "")
-        status = "failed" if errors and len(errors) == len(episodes) else "completed"
-        set_queue_status(item["id"], status)
-    return False
-
-
-def _express_slot_worker():
-    """Slot A — P0 watch-intent and P1 prefetch."""
-    global _express_running_id, _express_worker_thread_id
-    _express_worker_thread_id = threading.current_thread().ident
-
-    while True:
-        try:
-            item = None
-            with _express_lock:
-                item = get_next_queued_for_slot("express")
-                if item:
-                    set_queue_status(item["id"], "running")
-                    _express_running_id = item["id"]
-
-            if not item:
-                time.sleep(2)
-                continue
-
-            logger.info(
-                "Express slot: P%d '%s'", item.get("priority", "?"), item["title"]
-            )
-            _run_queue_item(item, slot="express")
-
-            with _express_lock:
-                if _express_running_id == item["id"]:
-                    _express_running_id = None
-
-        except Exception as e:
-            logger.error(f"Express worker error: {e}", exc_info=True)
-            with _express_lock:
-                _express_running_id = None
-            time.sleep(3)
-
-
-def _normal_slot_worker():
-    """Slot B — P2 manual queue and P3 autosync."""
-    while True:
-        try:
-            item = None
-            with _normal_lock:
-                item = get_next_queued_for_slot("normal")
-                if item:
-                    set_queue_status(item["id"], "running")
-
-            if not item:
-                time.sleep(3)
-                continue
-
-            logger.info(
-                "Normal slot: P%d '%s'", item.get("priority", "?"), item["title"]
-            )
-            _run_queue_item(item, slot="normal")
-
-        except Exception as e:
-            logger.error(f"Normal worker error: {e}", exc_info=True)
-            time.sleep(3)
-
-
-def _maybe_preempt_express_for_p0():
-    """If the express slot is running a P1 item and a P0 just arrived, interrupt."""
-    global _express_preempt_id
-    from ..models.common.common import kill_active_ffmpeg
-
-    with _express_lock:
-        current_id = _express_running_id
-        if current_id is None:
-            return
-        item = get_queue_item(current_id)
-        if not item or item.get("priority", 2) != 1:
-            return  # Only preempt P1, never interrupt another P0
-        _express_preempt_id = current_id
-        thread_id = _express_worker_thread_id
-
-    logger.info("Preempting P1 express item %d for incoming P0 watch-intent", current_id)
-    kill_active_ffmpeg(thread_id=thread_id)
-
-
-def _ensure_queue_worker():
-    """Start both download slot workers once."""
-    global _express_worker_started, _normal_worker_started
-    if _express_worker_started:
-        return
-    _express_worker_started = True
-    _normal_worker_started = True
-
-    from .db import get_db
-
-    conn = get_db()
-    try:
-        conn.execute(
-            "UPDATE download_queue SET status = 'queued' WHERE status = 'running'"
-        )
-        conn.execute("UPDATE download_queue SET captcha_url = NULL")
-        conn.commit()
-    finally:
-        conn.close()
-
-    threading.Thread(
-        target=_express_slot_worker, daemon=True, name="express-slot"
-    ).start()
-    threading.Thread(
-        target=_normal_slot_worker, daemon=True, name="normal-slot"
-    ).start()
 
 
 def _is_user_caught_up(series_url, last_ep):
@@ -769,6 +538,14 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
     app = Flask(__name__)
     app_version = _get_version()
 
+    # The Flutter web build ships baked into every image (see Dockerfile), but
+    # serving it — and its device-approval API — is opt-out at runtime via env.
+    webapp_enabled = os.environ.get("ANIWORLD_ENABLE_WEBAPP", "1") == "1"
+    if webapp_enabled:
+        from .webapp_auth import webapp_bp
+
+        app.register_blueprint(webapp_bp)
+
     base_url = os.environ.get("ANIWORLD_WEB_BASE_URL", "").strip().rstrip("/")
     if base_url:
         from urllib.parse import urlparse
@@ -811,6 +588,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         init_db()
         app.register_blueprint(auth_bp)
         csrf.init_app(app)
+        if webapp_enabled:
+            csrf.exempt(webapp_bp)
 
         if sso_enabled:
             init_oidc(app, force_sso=force_sso)
@@ -861,6 +640,12 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             }
 
     # Initialize download queue, custom paths, autosync and watch progress (works with or without auth)
+    # Users/api_tokens and web-app access requests are initialized unconditionally:
+    # the web-app approval gate works independently of --web-auth/--web-sso.
+    from .db import init_db as _init_users_db, init_web_access_requests_db
+
+    _init_users_db()
+    init_web_access_requests_db()
     init_profiles_db()
     init_series_language_prefs_db()
     init_queue_db()
@@ -880,7 +665,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
     # to avoid duplicate ffmpeg downloads.
     _debug = os.getenv("ANIWORLD_DEBUG_MODE", "0") == "1"
     if not _debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-        _ensure_queue_worker()
+        download_worker.ensure_started()
         _ensure_autosync_worker()
 
     @app.after_request
@@ -923,6 +708,25 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             "auth_enabled": True,
             "setup_needed": not _has_any_admin(),
         })
+
+    # ── Flutter web build ───────────────────────────────────────────────────
+    # Served same-origin under /app/ so the Flutter client never needs a
+    # separately-configured backend URL. Only mounted if the build output
+    # (flutter build web --base-href /app/) has been placed alongside this
+    # module; absent that, the route simply doesn't exist.
+    from pathlib import Path as _Path
+
+    _flutter_web_dir = _Path(__file__).resolve().parent / "flutter_web"
+    if webapp_enabled and _flutter_web_dir.is_dir():
+        from flask import send_from_directory
+
+        @app.route("/app/")
+        @app.route("/app/<path:asset_path>")
+        def flutter_web_app(asset_path="index.html"):
+            target = _flutter_web_dir / asset_path
+            if not target.is_file():
+                asset_path = "index.html"
+            return send_from_directory(str(_flutter_web_dir), asset_path)
 
     if not api_only:
         @app.route("/")
@@ -1298,13 +1102,14 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             username,
             custom_path_id=custom_path_id,
             priority=priority,
+            profile_id=g.profile_id,
         )
 
-        # P0 watch-intent: preempt any P1 prefetch running in the express slot
+        # P0 watch-intent: preempt a P1 prefetch already running for this profile
         if priority == 0:
-            _maybe_preempt_express_for_p0()
+            download_worker.maybe_preempt_for_p0(get_queue_item(queue_id))
 
-        _ensure_queue_worker()
+        download_worker.ensure_started()
         return jsonify({"queue_id": queue_id})
 
     @app.route("/api/queue")
@@ -1312,8 +1117,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         from ..models.common.common import get_ffmpeg_progress
 
         items = get_queue()
-        ffmpeg_pct = get_ffmpeg_progress()
-        return jsonify({"items": items, "ffmpeg_progress": ffmpeg_pct})
+        ffmpeg_progress = get_ffmpeg_progress()
+        return jsonify({"items": items, "ffmpeg_progress": ffmpeg_progress})
 
     @app.route("/api/queue/<int:queue_id>", methods=["DELETE"])
     def api_queue_remove(queue_id):
@@ -1324,11 +1129,19 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
 
     @app.route("/api/queue/<int:queue_id>/cancel", methods=["POST"])
     def api_queue_cancel(queue_id):
-        ok, err = cancel_queue_item(queue_id)
+        data = request.get_json(silent=True) or {}
+        force = bool(data.get("force", False))
+
+        ok, err = request_cancel(queue_id, force=force)
         if not ok:
             return jsonify({"error": err}), 400
-        from ..models.common.common import kill_active_ffmpeg
-        kill_active_ffmpeg()
+
+        if force:
+            from ..models.common.common import kill_active_ffmpeg
+
+            thread_id = download_worker.thread_id_for(queue_id)
+            if thread_id is not None:
+                kill_active_ffmpeg(thread_id=thread_id)
         return jsonify({"ok": True})
 
     @app.route("/api/queue/<int:queue_id>/move", methods=["POST"])
@@ -2816,6 +2629,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             "api_proxy_image",       # public: poster images are not sensitive
             "api_episode_preview",   # public: episode thumbnail images, not sensitive
             "api_thumbnails_sprite", # public: seek-bar sprite thumbnails, not sensitive
+            "webapp.request_access",        # public: web build's device-approval gate
+            "webapp.request_access_status", # public: polled before a token exists
+            "flutter_web_app",              # public: the SPA shell itself, not the data
         }
         for endpoint, view_func in list(app.view_functions.items()):
             if endpoint not in _exempt:

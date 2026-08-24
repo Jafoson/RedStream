@@ -11,6 +11,7 @@ import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
 import '../widgets/tv_keyboard_dialog.dart';
 import 'setup_screen.dart';
+import 'web_access_screen.dart';
 
 bool get _supportsUpdate =>
     !kIsWeb &&
@@ -94,6 +95,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               );
           }
         });
+      } else if (kIsWeb) {
+        widget.nav.registerNav([1], (row, col) {
+          if (row == 0) _disconnectWeb();
+        });
       } else {
         widget.nav.registerNav([1, 1, 1], (row, col) {
           switch (row) {
@@ -114,7 +119,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         Text('Settings', style: tt.displayMedium),
         const SizedBox(height: 40),
 
-        // ── Server URL ──────────────────────────────────────────────────
+        // ── Server URL (not applicable to the web build: it is always
+        //    same-origin with the backend that serves it) ─────────────────
+        if (!kIsWeb) ...[
         _Section(
           title: 'Server',
           children: [
@@ -182,8 +189,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ],
         ),
-
         const SizedBox(height: 32),
+        ],
 
         // ── Storage ──────────────────────────────────────────────────────
         _Section(
@@ -299,12 +306,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: ListenableBuilder(
                 listenable: widget.nav,
                 builder: (_, _) {
-                  final isFoc = widget.nav.isItemFocused(3, 0);
+                  final isFoc = kIsWeb
+                      ? widget.nav.isItemFocused(0, 0)
+                      : widget.nav.isItemFocused(3, 0);
                   return GestureDetector(
-                    onTap: () => Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(
-                          builder: (_) => const SetupScreen()),
-                    ),
+                    onTap: kIsWeb
+                        ? _disconnectWeb
+                        : () => Navigator.of(context).pushReplacement(
+                              MaterialPageRoute(
+                                  builder: (_) => const SetupScreen()),
+                            ),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 140),
                       padding: const EdgeInsets.symmetric(
@@ -328,11 +339,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.settings_ethernet_rounded,
+                          Icon(
+                              kIsWeb
+                                  ? Icons.logout_rounded
+                                  : Icons.settings_ethernet_rounded,
                               color: isFoc ? Rs.accent : Colors.white70,
                               size: 20),
                           const SizedBox(width: 8),
-                          Text('Server neu konfigurieren',
+                          Text(
+                              kIsWeb
+                                  ? 'Zugriff widerrufen'
+                                  : 'Server neu konfigurieren',
                               style: TextStyle(
                                   color:
                                       isFoc ? Rs.accent : Colors.white70)),
@@ -346,6 +363,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ],
         ),
       ],
+    );
+  }
+
+  Future<void> _disconnectWeb() async {
+    await ref.read(authTokenProvider.notifier).clearToken();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const WebAccessScreen()),
+      (route) => false,
     );
   }
 

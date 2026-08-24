@@ -14,9 +14,17 @@ import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/setup_screen.dart';
+import 'screens/web_access_screen.dart';
 import 'theme/rs_theme.dart';
 
-enum _AppInitScreen { serverSetup, adminSetup, login, profileSelect, home }
+enum _AppInitScreen {
+  serverSetup,
+  adminSetup,
+  login,
+  webAccessPending,
+  profileSelect,
+  home,
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -57,6 +65,27 @@ Future<_AppInitScreen> _resolveInitScreen({
   required String? storedToken,
   required SharedPreferences prefs,
 }) async {
+  // The web build is always same-origin with the backend that serves it, and
+  // never uses the username/password form — a browser without a valid token
+  // has to be approved from the server terminal instead. See WebAccessScreen.
+  if (kIsWeb) {
+    final origin = Uri.base.origin;
+    if (serverUrl != origin) await prefs.setString('server_url', origin);
+
+    if (storedToken != null && storedToken.isNotEmpty) {
+      try {
+        final authApi = ApiService(origin, authToken: storedToken);
+        await authApi.me();
+        return activeProfileId != null
+            ? _AppInitScreen.home
+            : _AppInitScreen.profileSelect;
+      } catch (_) {
+        await prefs.remove('auth_token');
+      }
+    }
+    return _AppInitScreen.webAccessPending;
+  }
+
   if (serverUrl.isEmpty) return _AppInitScreen.serverSetup;
 
   try {
@@ -108,11 +137,12 @@ class _AniWorldAppState extends ConsumerState<_AniWorldApp> {
   @override
   Widget build(BuildContext context) {
     final Widget home = switch (widget.initScreen) {
-      _AppInitScreen.serverSetup   => const SetupScreen(),
-      _AppInitScreen.adminSetup    => const LoginScreen(isSetup: true),
-      _AppInitScreen.login         => const LoginScreen(),
-      _AppInitScreen.profileSelect => const ProfileScreen(),
-      _AppInitScreen.home          => const HomeScreen(),
+      _AppInitScreen.serverSetup      => const SetupScreen(),
+      _AppInitScreen.adminSetup       => const LoginScreen(isSetup: true),
+      _AppInitScreen.login            => const LoginScreen(),
+      _AppInitScreen.webAccessPending => const WebAccessScreen(),
+      _AppInitScreen.profileSelect    => const ProfileScreen(),
+      _AppInitScreen.home             => const HomeScreen(),
     };
     return MaterialApp(
       title: 'RedStream',

@@ -1,4 +1,21 @@
 # ==========================================
+# Stage 0: Build the Flutter web frontend
+# ==========================================
+# Served same-origin by the Python backend under /app/ (see webapp_auth.py) —
+# this is what makes the "no manual server URL, no normal login" web build work.
+#
+# --platform=$BUILDPLATFORM: the output is architecture-independent JS/HTML,
+# so on a multi-platform build (linux/amd64,linux/arm64) this runs natively
+# on the build host once instead of once per target arch (avoiding a slow,
+# occasionally flaky QEMU-emulated Flutter build for the second platform).
+FROM --platform=$BUILDPLATFORM ghcr.io/cirruslabs/flutter:stable AS flutter-builder
+
+WORKDIR /app
+COPY app/ /app/
+RUN flutter pub get && \
+    flutter build web --release --base-href /app/
+
+# ==========================================
 # Stage 1: Build virtual env and dependencies
 # ==========================================
 FROM python:3.13-slim AS builder
@@ -131,6 +148,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # here, the runner installs it from apt above.
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /ms-playwright /ms-playwright
+
+# Flutter web build, served by the backend itself at /app/ (webapp_auth.py).
+COPY --from=flutter-builder /app/build/web /opt/venv/lib/python3.13/site-packages/aniworld/web/flutter_web
 
 # Environments
 ENV PATH="/opt/venv/bin:$PATH" \

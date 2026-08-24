@@ -274,6 +274,30 @@ def parse_args():
         help="Force SSO-only authentication (implies --web-auth and --web-sso)",
     )
 
+    webui.add_argument(
+        "--web-requests",
+        action="store_true",
+        help="List web-app (Flutter web) access requests and exit",
+    )
+    webui.add_argument(
+        "--web-approve",
+        metavar="ID",
+        type=int,
+        help="Approve a pending web-app access request by ID and exit",
+    )
+    webui.add_argument(
+        "--web-deny",
+        metavar="ID",
+        type=int,
+        help="Deny a pending web-app access request by ID and exit",
+    )
+    webui.add_argument(
+        "--web-revoke",
+        metavar="ID",
+        type=int,
+        help="Revoke a previously approved web-app access request by ID and exit",
+    )
+
     # =========================
     # Syncplay (only meaningful with --action Syncplay)
     # =========================
@@ -311,6 +335,71 @@ def parse_args():
                 border_style="cyan",
             )
         )
+        raise SystemExit(0)
+
+    if args.web_requests or args.web_approve or args.web_deny or args.web_revoke:
+        from .web.db import (
+            approve_web_access_request,
+            deny_web_access_request,
+            init_db as _init_users_db,
+            init_web_access_requests_db,
+            list_web_access_requests,
+            revoke_web_access_request,
+        )
+
+        _init_users_db()
+        init_web_access_requests_db()
+
+        if args.web_approve is not None:
+            ok, err, info = approve_web_access_request(args.web_approve)
+            if ok:
+                console.print(
+                    f"[green]Approved request #{args.web_approve}.[/green] "
+                    f"That browser is now logged in as admin '{info['username']}'."
+                )
+            else:
+                console.print(f"[red]Error:[/red] {err}")
+                raise SystemExit(1)
+        elif args.web_deny is not None:
+            ok, err = deny_web_access_request(args.web_deny)
+            if ok:
+                console.print(f"[yellow]Denied request #{args.web_deny}.[/yellow]")
+            else:
+                console.print(f"[red]Error:[/red] {err}")
+                raise SystemExit(1)
+        elif args.web_revoke is not None:
+            ok, err = revoke_web_access_request(args.web_revoke)
+            if ok:
+                console.print(
+                    f"[yellow]Revoked request #{args.web_revoke}.[/yellow] "
+                    "That browser must request access again."
+                )
+            else:
+                console.print(f"[red]Error:[/red] {err}")
+                raise SystemExit(1)
+
+        rows = list_web_access_requests()
+        if not rows:
+            console.print("No web-app access requests yet.")
+        else:
+            from rich.table import Table
+
+            table = Table(title="Web-App Access Requests")
+            table.add_column("ID")
+            table.add_column("Status")
+            table.add_column("IP")
+            table.add_column("User-Agent")
+            table.add_column("Requested")
+            for r in rows:
+                table.add_row(
+                    str(r["id"]),
+                    r["status"],
+                    r["ip_address"] or "",
+                    (r["user_agent"] or "")[:48],
+                    r["requested_at"],
+                )
+            console.print(table)
+
         raise SystemExit(0)
 
     if args.language:

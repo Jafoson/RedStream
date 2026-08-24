@@ -463,9 +463,9 @@ def run_cycle():
         )
 
         if report["queued"]:
-            from . import worker
+            from . import download_worker
 
-            worker.ensure_started()
+            download_worker.ensure_started()
         return report
     finally:
         _run_lock.release()
