@@ -12,8 +12,12 @@ FROM --platform=$BUILDPLATFORM ghcr.io/cirruslabs/flutter:stable AS flutter-buil
 
 WORKDIR /app
 COPY app/ /app/
+# See web/patch_legacy_browsers.sh: works around old embedded-browser Smart
+# TV apps (e.g. pre-2020 Chromium engines) white-screening because Flutter's
+# web loader and CanvasKit's glue JS unconditionally use ES2020+ syntax.
 RUN flutter pub get && \
-    flutter build web --release --base-href /app/
+    flutter build web --release --base-href /app/ && \
+    bash web/patch_legacy_browsers.sh
 
 # ==========================================
 # Stage 1: Build virtual env and dependencies
