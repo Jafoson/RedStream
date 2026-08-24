@@ -156,9 +156,11 @@ class _DownloadPlayScreenState extends ConsumerState<DownloadPlayScreen> {
 
   Future<void> _autoEnqueue() async {
     try {
-      final lang = widget.availableLanguages.contains('German Dub')
-          ? 'German Dub'
-          : (widget.availableLanguages.firstOrNull ?? 'German Dub');
+      final preferred =
+          await widget.api.getPreferredLanguage(seriesUrl: widget.seriesUrl);
+      final lang = widget.availableLanguages.contains(preferred)
+          ? preferred
+          : (widget.availableLanguages.firstOrNull ?? preferred);
 
       final id = await widget.api.enqueueDownload(
         title: widget.seriesTitle,

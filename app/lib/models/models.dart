@@ -7,12 +7,14 @@ class Profile {
   final String name;
   final String avatarColor;
   final String createdAt;
+  final String? defaultLanguage;
 
   const Profile({
     required this.id,
     required this.name,
     required this.avatarColor,
     this.createdAt = '',
+    this.defaultLanguage,
   });
 
   factory Profile.fromJson(Map<String, dynamic> j) => Profile(
@@ -20,8 +22,16 @@ class Profile {
         name: j['name'] as String? ?? 'Profile',
         avatarColor: j['avatar_color'] as String? ?? '#E50914',
         createdAt: j['created_at'] as String? ?? '',
+        defaultLanguage: j['default_language'] as String?,
       );
 }
+
+/// Canonical set of selectable audio/subtitle language options, mirroring
+/// the backend's LANG_LABELS (src/aniworld/config.py). Used for profile- and
+/// series-level default pickers, which offer the full set regardless of what
+/// a specific episode actually has available (the episode/download pickers
+/// already restrict to `availableLanguages`).
+const kAllLanguages = ['German Dub', 'German Sub', 'English Dub', 'English Sub'];
 
 // ---------------------------------------------------------------------------
 // Search / Browse

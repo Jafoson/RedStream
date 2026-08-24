@@ -5,7 +5,7 @@ import threading
 import time
 
 import requests
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, g, jsonify, redirect, render_template, request, url_for
 from flask_wtf.csrf import CSRFProtect
 
 from ..config import (
@@ -41,6 +41,7 @@ from .db import (
     add_to_watchlist,
     cancel_queue_item,
     clear_completed,
+    clear_series_language,
     create_api_token,
     create_profile,
     delete_api_token,
@@ -62,6 +63,7 @@ from .db import (
     get_queue_item,
     get_queue_stats,
     get_running,
+    get_series_language,
     get_sync_stats,
     get_watch_progress,
     get_watch_progress_for_series,
@@ -71,6 +73,7 @@ from .db import (
     init_custom_paths_db,
     init_profiles_db,
     init_queue_db,
+    init_series_language_prefs_db,
     init_watch_progress_db,
     init_watchlist_db,
     is_in_watchlist,
@@ -84,6 +87,7 @@ from .db import (
     set_captcha_url,
     clear_captcha_url,
     set_queue_status,
+    set_series_language,
     update_autosync_job,
     update_profile,
     update_queue_errors,
@@ -857,6 +861,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
 
     # Initialize download queue, custom paths, autosync and watch progress (works with or without auth)
     init_profiles_db()
+    init_series_language_prefs_db()
     init_queue_db()
     init_custom_paths_db()
     init_autosync_db()
@@ -1467,6 +1472,49 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         return results
 
     _tmdb_poster_cache: dict = {}
+
+    def _refresh_browse_caches():
+        """Force-refetch everything the home screen shows (new/popular anime,
+        series, movies) plus drop the poster/absolute-episode caches, which
+        otherwise only expire on their own TTL (browse) or never (posters,
+        absolute episode numbers) — long-running instances would otherwise
+        keep serving stale home-screen data indefinitely."""
+        _browse_cache.clear()
+        _tmdb_poster_cache.clear()
+        _absolute_ep_cache.clear()
+        for key, fetch_fn in (
+            ("new_animes", fetch_new_animes),
+            ("popular_animes", fetch_popular_animes),
+            ("new_series", fetch_new_series),
+            ("popular_series", fetch_popular_series),
+            ("popular_movies", fetch_popular_movies),
+        ):
+            try:
+                _cached_browse(key, fetch_fn)
+            except Exception as exc:
+                logger.warning(f"Scheduled refresh failed for '{key}': {exc}")
+
+    def _seconds_until_next_midnight():
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        next_midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return (next_midnight - now).total_seconds()
+
+    def _midnight_refresh_loop():
+        while True:
+            _time.sleep(_seconds_until_next_midnight())
+            try:
+                logger.info("Midnight refresh: updating home-screen caches")
+                _refresh_browse_caches()
+            except Exception:
+                logger.exception("Midnight browse-cache refresh failed")
+
+    threading.Thread(
+        target=_midnight_refresh_loop, name="aniworld-midnight-refresh", daemon=True
+    ).start()
 
     @app.route("/api/tmdb-poster")
     def api_tmdb_poster():
@@ -2328,9 +2376,10 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         data = request.get_json(force=True) or {}
         name = (data.get("name") or "").strip()
         avatar_color = (data.get("avatar_color") or "#E50914").strip()
+        default_language = (data.get("default_language") or "").strip() or None
         if not name:
             return jsonify({"error": "name required"}), 400
-        new_id = create_profile(name, avatar_color)
+        new_id = create_profile(name, avatar_color, default_language=default_language)
         return jsonify({"id": new_id, "ok": True})
 
     @app.route("/api/profiles/<int:profile_id>", methods=["PUT"])
@@ -2338,7 +2387,10 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         data = request.get_json(force=True) or {}
         name = (data.get("name") or "").strip() or None
         avatar_color = (data.get("avatar_color") or "").strip() or None
-        update_profile(profile_id, name=name, avatar_color=avatar_color)
+        kwargs = {}
+        if "default_language" in data:
+            kwargs["default_language"] = (data.get("default_language") or "").strip() or None
+        update_profile(profile_id, name=name, avatar_color=avatar_color, **kwargs)
         return jsonify({"ok": True})
 
     @app.route("/api/profiles/<int:profile_id>", methods=["DELETE"])
@@ -2346,6 +2398,54 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         ok, err = delete_profile(profile_id)
         if not ok:
             return jsonify({"error": err}), 400
+        return jsonify({"ok": True})
+
+    # ── Language preferences (profile default + per-series override) ──────────
+    # Cascade: series override (this profile) -> profile default -> global
+    # ANIWORLD_LANGUAGE env var -> "German Dub".
+
+    def _resolve_preferred_language(series_url=None):
+        profile_id = getattr(g, "profile_id", 1)
+        if series_url:
+            override = get_series_language(profile_id, series_url)
+            if override:
+                return override
+        for p in get_profiles():
+            if p["id"] == profile_id and p.get("default_language"):
+                return p["default_language"]
+        return os.environ.get("ANIWORLD_LANGUAGE", "German Dub")
+
+    @app.route("/api/preferred-language", methods=["GET"])
+    def api_preferred_language():
+        series_url = (request.args.get("series_url") or "").strip() or None
+        return jsonify({"language": _resolve_preferred_language(series_url)})
+
+    @app.route("/api/series-language", methods=["GET"])
+    def api_get_series_language():
+        series_url = (request.args.get("url") or "").strip()
+        if not series_url:
+            return jsonify({"error": "url required"}), 400
+        profile_id = getattr(g, "profile_id", 1)
+        return jsonify({"language": get_series_language(profile_id, series_url)})
+
+    @app.route("/api/series-language", methods=["PUT"])
+    def api_set_series_language():
+        data = request.get_json(force=True) or {}
+        series_url = (data.get("url") or "").strip()
+        language = (data.get("language") or "").strip()
+        if not series_url or not language:
+            return jsonify({"error": "url and language required"}), 400
+        profile_id = getattr(g, "profile_id", 1)
+        set_series_language(profile_id, series_url, language)
+        return jsonify({"ok": True})
+
+    @app.route("/api/series-language", methods=["DELETE"])
+    def api_clear_series_language():
+        series_url = (request.args.get("url") or "").strip()
+        if not series_url:
+            return jsonify({"error": "url required"}), 400
+        profile_id = getattr(g, "profile_id", 1)
+        clear_series_language(profile_id, series_url)
         return jsonify({"ok": True})
 
     @app.route("/api/progress", methods=["POST"])

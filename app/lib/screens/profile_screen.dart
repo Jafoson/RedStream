@@ -118,6 +118,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final nameCtrl = TextEditingController();
     String selectedColor = _nextColor(_profiles);
     try {
+      String? selectedLanguage;
       final result = await showDialog<String>(
         context: context,
         builder: (ctx) => _ProfileEditDialog(
@@ -125,13 +126,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           nameController: nameCtrl,
           initialColor: selectedColor,
           onColorChanged: (c) => selectedColor = c,
+          initialLanguage: selectedLanguage,
+          onLanguageChanged: (l) => selectedLanguage = l,
           canDelete: false,
           onDelete: null,
         ),
       );
       if (result == 'save' && nameCtrl.text.trim().isNotEmpty) {
         final api = ref.read(apiServiceProvider);
-        await api.createProfile(nameCtrl.text.trim(), selectedColor);
+        await api.createProfile(nameCtrl.text.trim(), selectedColor,
+            defaultLanguage: selectedLanguage);
         await _load();
       }
     } catch (_) {
@@ -145,6 +149,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     _dialogOpen = true;
     final nameCtrl = TextEditingController(text: p.name);
     String selectedColor = p.avatarColor;
+    String? selectedLanguage = p.defaultLanguage;
     try {
       final result = await showDialog<String>(
         context: context,
@@ -153,6 +158,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           nameController: nameCtrl,
           initialColor: selectedColor,
           onColorChanged: (c) => selectedColor = c,
+          initialLanguage: selectedLanguage,
+          onLanguageChanged: (l) => selectedLanguage = l,
           canDelete: _profiles.length > 1,
           onDelete: () => Navigator.of(ctx).pop('delete'),
         ),
@@ -164,7 +171,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       } else if (result == 'save' && nameCtrl.text.trim().isNotEmpty) {
         final api = ref.read(apiServiceProvider);
         await api.updateProfileData(p.id,
-            name: nameCtrl.text.trim(), avatarColor: selectedColor);
+            name: nameCtrl.text.trim(),
+            avatarColor: selectedColor,
+            defaultLanguage: selectedLanguage ?? '');
         await _load();
       }
     } catch (_) {
@@ -498,6 +507,8 @@ class _ProfileEditDialog extends StatefulWidget {
   final TextEditingController nameController;
   final String initialColor;
   final void Function(String) onColorChanged;
+  final String? initialLanguage;
+  final void Function(String?) onLanguageChanged;
   final bool canDelete;
   final VoidCallback? onDelete;
 
@@ -506,6 +517,8 @@ class _ProfileEditDialog extends StatefulWidget {
     required this.nameController,
     required this.initialColor,
     required this.onColorChanged,
+    required this.initialLanguage,
+    required this.onLanguageChanged,
     required this.canDelete,
     required this.onDelete,
   });
@@ -516,17 +529,24 @@ class _ProfileEditDialog extends StatefulWidget {
 
 class _ProfileEditDialogState extends State<_ProfileEditDialog> {
   late String _selectedColor;
+  String? _selectedLanguage;
 
   @override
   void initState() {
     super.initState();
     _selectedColor = widget.initialColor;
+    _selectedLanguage = widget.initialLanguage;
     showKeyboardOnNextFrame();
   }
 
   void _selectColor(String hex) {
     setState(() => _selectedColor = hex);
     widget.onColorChanged(hex);
+  }
+
+  void _selectLanguage(String? lang) {
+    setState(() => _selectedLanguage = lang);
+    widget.onLanguageChanged(lang);
   }
 
   @override
@@ -608,6 +628,29 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
                       ),
                     );
                   }).toList(),
+                ),
+                const SizedBox(height: 28),
+                const Text(
+                  'Standardsprache',
+                  style: TextStyle(color: Rs.muted, fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    _LanguageChip(
+                      label: 'Automatisch',
+                      selected: _selectedLanguage == null,
+                      onSelect: () => _selectLanguage(null),
+                    ),
+                    for (final lang in kAllLanguages)
+                      _LanguageChip(
+                        label: lang,
+                        selected: _selectedLanguage == lang,
+                        onSelect: () => _selectLanguage(lang),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 36),
                 Row(
@@ -701,6 +744,77 @@ class _TvColorSwatchState extends State<_TvColorSwatch> {
             child: widget.selected
                 ? const Icon(Icons.check, color: Colors.white, size: 22)
                 : null,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Focusable pill for gamepad navigation inside dialogs (language chips).
+class _LanguageChip extends StatefulWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onSelect;
+  const _LanguageChip({
+    required this.label,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  @override
+  State<_LanguageChip> createState() => _LanguageChipState();
+}
+
+class _LanguageChipState extends State<_LanguageChip> {
+  bool _focused = false;
+  bool _hovered = false;
+
+  bool get _active => _focused || _hovered;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit:  (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onSelect,
+        child: Focus(
+          onFocusChange: (f) => setState(() => _focused = f),
+          onKeyEvent: (_, e) {
+            if (e is KeyDownEvent &&
+                (e.logicalKey == LogicalKeyboardKey.select ||
+                 e.logicalKey == LogicalKeyboardKey.enter ||
+                 e.logicalKey == LogicalKeyboardKey.gameButtonA)) {
+              widget.onSelect();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: widget.selected
+                  ? Rs.accent.withValues(alpha: _active ? 1 : 0.85)
+                  : (_active ? Rs.panel3 : Rs.panel2),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: widget.selected
+                    ? Rs.accentLight
+                    : (_active ? Rs.accent : Rs.line2),
+                width: 2,
+              ),
+            ),
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                color: widget.selected ? Colors.white : Rs.text,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
+            ),
           ),
         ),
       ),

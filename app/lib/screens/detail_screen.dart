@@ -9,6 +9,12 @@ import '../theme/rs_theme.dart';
 import '../widgets/tv_focusable.dart';
 import 'download_play_screen.dart';
 
+// Sentinel returned by _LanguageOverrideDialog when the user picks
+// "Automatisch" (i.e. clear the series-level override, fall back to the
+// profile default). Distinct from `null`, which means the dialog was
+// dismissed without a choice.
+const _kAutomaticLanguage = '__automatic__';
+
 /// Combined series detail + episode list, matching the RedStream detail screen.
 /// Pushed via Navigator.push — handles its own D-Pad navigation independently
 /// of the AppNavController (which is paused while this route is active).
@@ -38,6 +44,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   bool _resumeIsNextEp = false;
   bool _inWatchlist = false;
   int? _autosyncJobId;
+  String? _seriesLanguageOverride;
+  String _resolvedLanguage = 'German Dub';
   final _playFocusNode = FocusNode();
   List<FocusNode> _seasonFocusNodes = [];
   final _mainScroll = ScrollController();
@@ -93,6 +101,13 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         api.checkAutosync(widget.seriesUrl).then<int?>((v) => v).catchError((_) => null as int?),
       ]);
       if (!mounted) return;
+      // Language cascade info fetched separately (different return types).
+      api.getSeriesLanguage(widget.seriesUrl).then((lang) {
+        if (mounted) setState(() => _seriesLanguageOverride = lang);
+      }).catchError((_) {});
+      api.getPreferredLanguage(seriesUrl: widget.seriesUrl).then((lang) {
+        if (mounted) setState(() => _resolvedLanguage = lang);
+      }).catchError((_) {});
       final allProgress = results[2] as List<WatchProgress>;
       _computeResume(allProgress);
       final seasons = results[1] as List<Season>;
@@ -153,6 +168,29 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     } catch (_) {}
   }
 
+  Future<void> _showLanguageDialog() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => _LanguageOverrideDialog(
+        current: _seriesLanguageOverride,
+        resolved: _resolvedLanguage,
+      ),
+    );
+    if (result == null) return; // cancelled
+    final api = ref.read(apiServiceProvider);
+    if (result == _kAutomaticLanguage) {
+      await api.clearSeriesLanguage(widget.seriesUrl);
+      if (mounted) setState(() => _seriesLanguageOverride = null);
+    } else {
+      await api.setSeriesLanguage(widget.seriesUrl, result);
+      if (mounted) setState(() => _seriesLanguageOverride = result);
+    }
+    try {
+      final lang = await api.getPreferredLanguage(seriesUrl: widget.seriesUrl);
+      if (mounted) setState(() => _resolvedLanguage = lang);
+    } catch (_) {}
+  }
+
   Future<void> _ensureInWatchlist() async {
     if (_inWatchlist) return;
     final api = ref.read(apiServiceProvider);
@@ -200,9 +238,10 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     } catch (_) {}
     // Not in library → enqueue silently
     try {
-      final lang = ep.availableLanguages.contains('German Dub')
-          ? 'German Dub'
-          : (ep.availableLanguages.firstOrNull ?? 'German Dub');
+      final preferred = await api.getPreferredLanguage(seriesUrl: widget.seriesUrl);
+      final lang = ep.availableLanguages.contains(preferred)
+          ? preferred
+          : (ep.availableLanguages.firstOrNull ?? preferred);
       await api.enqueueDownload(
         title: widget.title,
         seriesUrl: widget.seriesUrl,
@@ -380,6 +419,9 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                     onResume: _playFromResume,
                     inWatchlist: _inWatchlist,
                     onToggleWatchlist: _toggleWatchlist,
+                    seriesLanguageOverride: _seriesLanguageOverride,
+                    resolvedLanguage: _resolvedLanguage,
+                    onChangeLanguage: _showLanguageDialog,
                     playFocusNode: _playFocusNode,
                     seasonFocusNodes: _seasonFocusNodes,
                     scrollController: _mainScroll,
@@ -409,6 +451,9 @@ class _DetailBody extends StatelessWidget {
   final VoidCallback onResume;
   final bool inWatchlist;
   final VoidCallback onToggleWatchlist;
+  final String? seriesLanguageOverride;
+  final String resolvedLanguage;
+  final VoidCallback onChangeLanguage;
   final FocusNode? playFocusNode;
   final List<FocusNode> seasonFocusNodes;
   final ScrollController? scrollController;
@@ -429,6 +474,9 @@ class _DetailBody extends StatelessWidget {
     required this.onResume,
     required this.inWatchlist,
     required this.onToggleWatchlist,
+    required this.seriesLanguageOverride,
+    required this.resolvedLanguage,
+    required this.onChangeLanguage,
     this.playFocusNode,
     this.seasonFocusNodes = const [],
     this.scrollController,
@@ -451,6 +499,9 @@ class _DetailBody extends StatelessWidget {
           onResume: onResume,
           inWatchlist: inWatchlist,
           onToggleWatchlist: onToggleWatchlist,
+          seriesLanguageOverride: seriesLanguageOverride,
+          resolvedLanguage: resolvedLanguage,
+          onChangeLanguage: onChangeLanguage,
           playFocusNode: playFocusNode,
         ),
 
@@ -504,6 +555,9 @@ class _HeroSection extends StatelessWidget {
   final VoidCallback onResume;
   final bool inWatchlist;
   final VoidCallback onToggleWatchlist;
+  final String? seriesLanguageOverride;
+  final String resolvedLanguage;
+  final VoidCallback onChangeLanguage;
   final FocusNode? playFocusNode;
 
   const _HeroSection({
@@ -515,6 +569,9 @@ class _HeroSection extends StatelessWidget {
     required this.onResume,
     required this.inWatchlist,
     required this.onToggleWatchlist,
+    required this.seriesLanguageOverride,
+    required this.resolvedLanguage,
+    required this.onChangeLanguage,
     this.playFocusNode,
   });
 
@@ -755,6 +812,44 @@ class _HeroSection extends StatelessWidget {
                               inWatchlist ? 'In der Watchlist' : 'Watchlist',
                               style: TextStyle(
                                 color: inWatchlist ? Rs.accent : Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    TvFocusable(
+                      onActivate: onChangeLanguage,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        height: 42,
+                        padding: const EdgeInsets.symmetric(horizontal: 18),
+                        decoration: BoxDecoration(
+                          color: seriesLanguageOverride != null
+                              ? Rs.accent.withValues(alpha: 0.22)
+                              : Colors.white.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: seriesLanguageOverride != null ? Rs.accent : Rs.line2,
+                            width: seriesLanguageOverride != null ? 2 : 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.language_rounded,
+                              color: seriesLanguageOverride != null ? Rs.accent : Colors.white,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 7),
+                            Text(
+                              seriesLanguageOverride ?? resolvedLanguage,
+                              style: TextStyle(
+                                color: seriesLanguageOverride != null ? Rs.accent : Colors.white,
                                 fontWeight: FontWeight.w700,
                                 fontSize: 14,
                               ),
@@ -1152,6 +1247,81 @@ class _ErrorBody extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Series-level language override dialog
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _LanguageOverrideDialog extends StatelessWidget {
+  final String? current; // null = no override (follows profile default)
+  final String resolved; // the language actually in effect right now
+
+  const _LanguageOverrideDialog({required this.current, required this.resolved});
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+
+    return AlertDialog(
+      backgroundColor: Rs.panel,
+      title: Text('Sprache für diese Serie', style: tt.titleLarge),
+      content: SizedBox(
+        width: 400,
+        child: Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            _LangOption(
+              label: 'Automatisch ($resolved)',
+              selected: current == null,
+              onSelect: () => Navigator.of(context).pop(_kAutomaticLanguage),
+            ),
+            for (final lang in kAllLanguages)
+              _LangOption(
+                label: lang,
+                selected: current == lang,
+                onSelect: () => Navigator.of(context).pop(lang),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TvFocusable(
+          onActivate: () => Navigator.of(context).pop(),
+          borderRadius: BorderRadius.circular(6),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Text('Abbrechen', style: TextStyle(color: Colors.white54)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LangOption extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onSelect;
+  const _LangOption({required this.label, required this.selected, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return TvFocusable(
+      onActivate: onSelect,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? Rs.accent : Rs.panel3,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(label,
+            style: TextStyle(color: selected ? Colors.white : Colors.white70)),
       ),
     );
   }

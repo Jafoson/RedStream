@@ -946,6 +946,12 @@ def init_profiles_db():
                 "INSERT INTO profiles (id, name, avatar_color) VALUES (1, 'Standard', '#E50914')"
             )
             conn.commit()
+        # Migrate: add default_language column (existing DBs)
+        try:
+            conn.execute("ALTER TABLE profiles ADD COLUMN default_language TEXT")
+            conn.commit()
+        except Exception:
+            pass
     finally:
         conn.close()
 
@@ -954,19 +960,19 @@ def get_profiles():
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT id, name, avatar_color, created_at FROM profiles ORDER BY id"
+            "SELECT id, name, avatar_color, created_at, default_language FROM profiles ORDER BY id"
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def create_profile(name, avatar_color="#E50914"):
+def create_profile(name, avatar_color="#E50914", default_language=None):
     conn = get_db()
     try:
         cur = conn.execute(
-            "INSERT INTO profiles (name, avatar_color) VALUES (?, ?)",
-            (name, avatar_color),
+            "INSERT INTO profiles (name, avatar_color, default_language) VALUES (?, ?, ?)",
+            (name, avatar_color, default_language),
         )
         conn.commit()
         return cur.lastrowid
@@ -974,23 +980,27 @@ def create_profile(name, avatar_color="#E50914"):
         conn.close()
 
 
-def update_profile(profile_id, name=None, avatar_color=None):
-    if name is None and avatar_color is None:
+_UNSET = object()
+
+
+def update_profile(profile_id, name=None, avatar_color=None, default_language=_UNSET):
+    fields = []
+    values = []
+    if name is not None:
+        fields.append("name = ?")
+        values.append(name)
+    if avatar_color is not None:
+        fields.append("avatar_color = ?")
+        values.append(avatar_color)
+    if default_language is not _UNSET:
+        fields.append("default_language = ?")
+        values.append(default_language)
+    if not fields:
         return
+    values.append(profile_id)
     conn = get_db()
     try:
-        if name is not None and avatar_color is not None:
-            conn.execute(
-                "UPDATE profiles SET name = ?, avatar_color = ? WHERE id = ?",
-                (name, avatar_color, profile_id),
-            )
-        elif name is not None:
-            conn.execute("UPDATE profiles SET name = ? WHERE id = ?", (name, profile_id))
-        else:
-            conn.execute(
-                "UPDATE profiles SET avatar_color = ? WHERE id = ?",
-                (avatar_color, profile_id),
-            )
+        conn.execute(f"UPDATE profiles SET {', '.join(fields)} WHERE id = ?", values)
         conn.commit()
     finally:
         conn.close()
@@ -1005,8 +1015,77 @@ def delete_profile(profile_id):
         conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
         conn.execute("DELETE FROM watch_progress WHERE profile_id = ?", (profile_id,))
         conn.execute("DELETE FROM watchlist WHERE profile_id = ?", (profile_id,))
+        conn.execute("DELETE FROM series_language_prefs WHERE profile_id = ?", (profile_id,))
         conn.commit()
         return True, None
+    finally:
+        conn.close()
+
+
+# ===== Series language preferences =====
+# Per-profile, per-series override of which audio/subtitle language to
+# default to (e.g. always German Dub for One Piece regardless of the
+# profile-wide default). Falls back to the profile default, then the
+# global ANIWORLD_LANGUAGE env var, when no override is set.
+
+_CREATE_SERIES_LANGUAGE_PREFS_TABLE = """\
+CREATE TABLE IF NOT EXISTS series_language_prefs (
+    profile_id INTEGER NOT NULL,
+    series_url TEXT NOT NULL,
+    language TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (profile_id, series_url)
+);
+"""
+
+
+def init_series_language_prefs_db():
+    ANIWORLD_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    conn = get_db()
+    try:
+        conn.execute(_CREATE_SERIES_LANGUAGE_PREFS_TABLE)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_series_language(profile_id, series_url):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT language FROM series_language_prefs WHERE profile_id = ? AND series_url = ?",
+            (profile_id, series_url),
+        ).fetchone()
+        return row["language"] if row else None
+    finally:
+        conn.close()
+
+
+def set_series_language(profile_id, series_url, language):
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO series_language_prefs (profile_id, series_url, language, updated_at)
+            VALUES (?, ?, ?, datetime('now'))
+            ON CONFLICT(profile_id, series_url)
+            DO UPDATE SET language = excluded.language, updated_at = excluded.updated_at
+            """,
+            (profile_id, series_url, language),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_series_language(profile_id, series_url):
+    conn = get_db()
+    try:
+        conn.execute(
+            "DELETE FROM series_language_prefs WHERE profile_id = ? AND series_url = ?",
+            (profile_id, series_url),
+        )
+        conn.commit()
     finally:
         conn.close()
 

@@ -38,6 +38,7 @@ class _EpisodesScreenState extends ConsumerState<EpisodesScreen> {
   void initState() {
     super.initState();
     _load();
+    _loadPreferredLanguage();
   }
 
   Future<void> _load() async {
@@ -48,6 +49,13 @@ class _EpisodesScreenState extends ConsumerState<EpisodesScreen> {
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
+  }
+
+  Future<void> _loadPreferredLanguage() async {
+    final lang = await ref
+        .read(apiServiceProvider)
+        .getPreferredLanguage(seriesUrl: widget.seriesUrl);
+    if (mounted) setState(() => _selectedLanguage = lang);
   }
 
   static String _fmtSeconds(double s) {

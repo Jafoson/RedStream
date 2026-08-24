@@ -469,22 +469,64 @@ class ApiService {
     return list.map((e) => Profile.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  Future<int> createProfile(String name, String avatarColor) async {
+  Future<int> createProfile(String name, String avatarColor, {String? defaultLanguage}) async {
     final resp = await _dio.post<Map<String, dynamic>>(
       '/api/profiles',
-      data: {'name': name, 'avatar_color': avatarColor},
+      data: {
+        'name': name,
+        'avatar_color': avatarColor,
+        if (defaultLanguage != null) 'default_language': defaultLanguage,
+      },
     );
     return resp.data?['id'] as int? ?? 0;
   }
 
-  Future<void> updateProfileData(int id, {String? name, String? avatarColor}) async {
+  Future<void> updateProfileData(int id,
+      {String? name, String? avatarColor, String? defaultLanguage}) async {
     await _dio.put<void>('/api/profiles/$id', data: {
       'name': name,
       'avatar_color': avatarColor,
+      if (defaultLanguage != null) 'default_language': defaultLanguage,
     });
   }
 
   Future<void> deleteProfile(int id) async {
     await _dio.delete<void>('/api/profiles/$id');
+  }
+
+  // ── Language preferences ─────────────────────────────────────────────────
+  /// Resolves the cascade: series override (this profile) -> profile default
+  /// -> global default -> "German Dub". Always returns a usable value.
+  Future<String> getPreferredLanguage({String? seriesUrl}) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/api/preferred-language',
+        queryParameters: {if (seriesUrl != null) 'series_url': seriesUrl},
+      );
+      return resp.data?['language'] as String? ?? 'German Dub';
+    } catch (_) {
+      return 'German Dub';
+    }
+  }
+
+  /// Returns the explicit per-series override for this profile, or null if
+  /// none is set (meaning it falls back to the profile default).
+  Future<String?> getSeriesLanguage(String seriesUrl) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/api/series-language',
+      queryParameters: {'url': seriesUrl},
+    );
+    return resp.data?['language'] as String?;
+  }
+
+  Future<void> setSeriesLanguage(String seriesUrl, String language) async {
+    await _dio.put<void>('/api/series-language', data: {
+      'url': seriesUrl,
+      'language': language,
+    });
+  }
+
+  Future<void> clearSeriesLanguage(String seriesUrl) async {
+    await _dio.delete<void>('/api/series-language', queryParameters: {'url': seriesUrl});
   }
 }
