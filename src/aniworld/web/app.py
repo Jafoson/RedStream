@@ -228,6 +228,34 @@ def _megakino_episodes(prov, url):
     ]
 
 
+# series url -> {season_number: episodes_before_this_season}. Long-running
+# shows split across many AniWorld "seasons" (e.g. One Piece arcs) need this
+# to show an absolute episode number; computing it costs one page fetch per
+# season, so it's cached for the process lifetime once resolved.
+_absolute_ep_cache: dict = {}
+
+
+def _cumulative_before_map(series):
+    key = getattr(series, "url", None)
+    if not key:
+        return {}
+    if key in _absolute_ep_cache:
+        return _absolute_ep_cache[key]
+    cumulative = {}
+    try:
+        total = 0
+        for s in series.seasons:
+            if getattr(s, "are_movies", False):
+                continue
+            cumulative[s.season_number] = total
+            total += s.episode_count or 0
+    except Exception as e:
+        logger.warning(f"Absolute episode numbering failed for {key}: {e}")
+        cumulative = {}
+    _absolute_ep_cache[key] = cumulative
+    return cumulative
+
+
 # Only match series-level links: /anime/stream/<slug> (no season/episode)
 _SERIES_LINK_PATTERN = re.compile(r"^/anime/stream/[a-zA-Z0-9\-]+/?$", re.IGNORECASE)
 
@@ -1133,6 +1161,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             ep_urls = [ep.url for ep in season.episodes]
             progress_map = get_episode_progress_for_urls(ep_urls, profile_id=getattr(_g, "profile_id", 1))
 
+            before = _cumulative_before_map(series).get(season.season_number) if series else None
+
             episodes_data = []
             for ep in season.episodes:
                 key = (ep.season.season_number, ep.episode_number)
@@ -1145,6 +1175,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
                     {
                         "url": ep.url,
                         "episode_number": ep.episode_number,
+                        "absolute_episode_number": (
+                            before + ep.episode_number if before is not None else None
+                        ),
                         "title_de": getattr(ep, "title_de", ""),
                         "title_en": getattr(ep, "title_en", ""),
                         "downloaded": downloaded,

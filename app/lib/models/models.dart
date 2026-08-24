@@ -144,6 +144,10 @@ class Season {
 class Episode {
   final String url;
   final int episodeNumber;
+  // Running episode count across all seasons (e.g. One Piece "Episode 745"),
+  // null when the backend couldn't compute it (single-season shows, or the
+  // per-season episode counts failed to resolve).
+  final int? absoluteEpisodeNumber;
   final String titleDe;
   final String titleEn;
   final bool downloaded;
@@ -156,6 +160,7 @@ class Episode {
   const Episode({
     required this.url,
     required this.episodeNumber,
+    this.absoluteEpisodeNumber,
     required this.titleDe,
     required this.titleEn,
     required this.downloaded,
@@ -169,6 +174,7 @@ class Episode {
   factory Episode.fromJson(Map<String, dynamic> j) => Episode(
         url: j['url'] as String? ?? '',
         episodeNumber: j['episode_number'] as int? ?? 0,
+        absoluteEpisodeNumber: j['absolute_episode_number'] as int?,
         titleDe: j['title_de'] as String? ?? '',
         titleEn: j['title_en'] as String? ?? '',
         downloaded: j['downloaded'] as bool? ?? false,
@@ -181,9 +187,16 @@ class Episode {
 
   String get displayTitle => titleDe.isNotEmpty ? titleDe : (titleEn.isNotEmpty ? titleEn : 'Episode $episodeNumber');
 
+  /// e.g. "Folge 45 · #745" when the absolute number is known and differs
+  /// from the season-relative one; otherwise just "Folge 45".
+  String get episodeLabel => (absoluteEpisodeNumber != null && absoluteEpisodeNumber != episodeNumber)
+      ? 'Folge $episodeNumber · #$absoluteEpisodeNumber'
+      : 'Folge $episodeNumber';
+
   Episode copyWith({double? watchPosition, double? watchDuration, bool? isWatched}) => Episode(
         url: url,
         episodeNumber: episodeNumber,
+        absoluteEpisodeNumber: absoluteEpisodeNumber,
         titleDe: titleDe,
         titleEn: titleEn,
         downloaded: downloaded,

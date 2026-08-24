@@ -29,6 +29,7 @@ class PlayerScreen extends StatefulWidget {
   final int season;
   final int episode;
   final String episodeTitle;
+  final int? absoluteEpisode;
   final int? customPathId;
   final String? streamUrl;
   final String? episodeUrl;
@@ -42,6 +43,7 @@ class PlayerScreen extends StatefulWidget {
     required this.season,
     required this.episode,
     required this.episodeTitle,
+    this.absoluteEpisode,
     this.customPathId,
     this.streamUrl,
     this.episodeUrl,
@@ -76,6 +78,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // Tracks the currently active episode (may change when skipping to next ep)
   late int _activeEpisode;
   String? _activeEpisodeUrl;
+  late int _activeSeason;
+  late String _activeEpisodeTitle;
+  int? _activeAbsoluteEpisode;
 
   _FocusArea _focusArea = _FocusArea.none;
   int _controlsFocusIdx = 1; // default: play/pause
@@ -114,6 +119,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     super.initState();
     _activeEpisode = widget.episode;
     _activeEpisodeUrl = widget.episodeUrl;
+    _activeSeason = widget.season;
+    _activeEpisodeTitle = widget.episodeTitle;
+    _activeAbsoluteEpisode = widget.absoluteEpisode;
     _player = Player();
     _controller = VideoController(_player);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -544,6 +552,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return '';
   }
 
+  /// Looks up the real title (and absolute episode number, if the backend
+  /// resolved one) of episode [episodeNum] within [seasonUrl] via the
+  /// episodes list, falling back to a generic label if that fails (e.g.
+  /// offline, or the episode isn't listed yet).
+  Future<(String title, int? absolute)> _fetchEpisodeMeta(
+      String seasonUrl, int episodeNum) async {
+    final fallback = 'Folge $episodeNum';
+    if (seasonUrl.isEmpty) return (fallback, null);
+    try {
+      final eps = await widget.api.getEpisodes(seasonUrl);
+      for (final ep in eps) {
+        if (ep.episodeNumber == episodeNum) {
+          return (ep.displayTitle, ep.absoluteEpisodeNumber);
+        }
+      }
+    } catch (_) {}
+    return (fallback, null);
+  }
+
   Future<void> _navigateToNextEpisode() async {
     _countdownTimer?.cancel();
     _countdownTimer = null;
@@ -563,10 +590,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
             RegExp(r'episode-(\d+)$'), (_) => 'episode-$nextEp')
         : null;
     final nextEpUrl = (derived != curEpUrl) ? derived : null;
+    final seasonUrl = curEpUrl.replaceAll(RegExp(r'/episode-\d+/?$'), '');
 
-    // Look up the URL while the current video is still playing normally —
-    // no pause means no Flask thread starvation from the old player.
-    final streamUrl = await _findNextEpStreamUrl(nextEp);
+    // Look up the URL and the real title while the current video is still
+    // playing normally — no pause means no Flask thread starvation from the
+    // old player.
+    final streamUrlFuture = _findNextEpStreamUrl(nextEp);
+    final metaFuture = _fetchEpisodeMeta(seasonUrl, nextEp);
+    final streamUrl = await streamUrlFuture;
+    final (nextEpTitle, nextEpAbsolute) = await metaFuture;
     if (!mounted) return;
 
     if (streamUrl.isEmpty) {
@@ -586,9 +618,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 episodeUrl: nextEpUrl ?? '',
                 seriesUrl: widget.seriesUrl ?? '',
                 seriesTitle: widget.seriesTitle,
-                season: widget.season,
+                season: _activeSeason,
                 episodeNumber: nextEp,
-                episodeTitle: 'Folge $nextEp',
+                episodeTitle: nextEpTitle,
+                absoluteEpisode: nextEpAbsolute,
                 availableLanguages: const [],
                 customPathId: widget.customPathId,
                 skipResume: true,
@@ -611,6 +644,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     setState(() {
       _activeEpisode = nextEp;
       _activeEpisodeUrl = nextEpUrl;
+      _activeEpisodeTitle = nextEpTitle;
+      _activeAbsoluteEpisode = nextEpAbsolute;
       _loading = true;
       _position = Duration.zero;
       _duration = Duration.zero;
@@ -964,9 +999,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       progress: progress,
                       isPlaying: _isPlaying,
                       seriesTitle: widget.seriesTitle,
-                      season: widget.season,
+                      season: _activeSeason,
                       episode: _activeEpisode,
-                      episodeTitle: widget.episodeTitle,
+                      episodeTitle: _activeEpisodeTitle,
+                      absoluteEpisode: _activeAbsoluteEpisode,
                       thumbnails: _thumbnails,
                       focusArea: _focusArea,
                       controlsFocusIdx: _controlsFocusIdx,
@@ -1102,6 +1138,7 @@ class _PlayerUI extends StatefulWidget {
   final int season;
   final int episode;
   final String episodeTitle;
+  final int? absoluteEpisode;
   final ThumbnailMeta? thumbnails;
   final _FocusArea focusArea;
   final int controlsFocusIdx;
@@ -1127,6 +1164,7 @@ class _PlayerUI extends StatefulWidget {
     required this.season,
     required this.episode,
     required this.episodeTitle,
+    this.absoluteEpisode,
     this.thumbnails,
     required this.focusArea,
     required this.controlsFocusIdx,
@@ -1287,7 +1325,10 @@ class _PlayerUIState extends State<_PlayerUI> {
               children: [
                 // Series info
                 Text(
-                  'STAFFEL ${widget.season} · FOLGE ${widget.episode}',
+                  widget.absoluteEpisode != null &&
+                          widget.absoluteEpisode != widget.episode
+                      ? 'STAFFEL ${widget.season} · FOLGE ${widget.episode} · #${widget.absoluteEpisode}'
+                      : 'STAFFEL ${widget.season} · FOLGE ${widget.episode}',
                   style: const TextStyle(
                       color: Rs.accent,
                       fontSize: 12,

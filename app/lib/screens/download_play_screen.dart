@@ -23,6 +23,7 @@ class DownloadPlayScreen extends ConsumerStatefulWidget {
   final int season;
   final int episodeNumber;
   final String episodeTitle;
+  final int? absoluteEpisode;
   final List<String> availableLanguages;
   final int? customPathId;
   final bool skipResume;
@@ -36,6 +37,7 @@ class DownloadPlayScreen extends ConsumerStatefulWidget {
     required this.season,
     required this.episodeNumber,
     required this.episodeTitle,
+    this.absoluteEpisode,
     required this.availableLanguages,
     this.customPathId,
     this.skipResume = false,
@@ -226,6 +228,7 @@ class _DownloadPlayScreenState extends ConsumerState<DownloadPlayScreen> {
             season: widget.season,
             episode: widget.episodeNumber,
             episodeTitle: widget.episodeTitle,
+            absoluteEpisode: widget.absoluteEpisode,
             customPathId: widget.customPathId,
             streamUrl: streamUrl,
             episodeUrl: widget.episodeUrl,

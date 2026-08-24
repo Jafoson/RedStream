@@ -78,6 +78,7 @@ class _EpisodesScreenState extends ConsumerState<EpisodesScreen> {
           season: widget.season.seasonNumber,
           episode: ep.episodeNumber,
           episodeTitle: ep.displayTitle,
+          absoluteEpisode: ep.absoluteEpisodeNumber,
           episodeUrl: ep.url,
           seriesUrl: widget.seriesUrl,
         ),
@@ -104,6 +105,7 @@ class _EpisodesScreenState extends ConsumerState<EpisodesScreen> {
               season: widget.season.seasonNumber,
               episodeNumber: ep.episodeNumber,
               episodeTitle: ep.displayTitle,
+              absoluteEpisode: ep.absoluteEpisodeNumber,
               availableLanguages: ep.availableLanguages,
             ),
           ),
@@ -227,6 +229,15 @@ class _EpisodesScreenState extends ConsumerState<EpisodesScreen> {
                                           ep.availableLanguages.join(' · '),
                                           style: tt.bodyMedium
                                               ?.copyWith(fontSize: 13),
+                                        ),
+                                      if (ep.absoluteEpisodeNumber != null &&
+                                          ep.absoluteEpisodeNumber !=
+                                              ep.episodeNumber)
+                                        Text(
+                                          'Episode #${ep.absoluteEpisodeNumber} gesamt',
+                                          style: tt.bodyMedium?.copyWith(
+                                              fontSize: 12,
+                                              color: Colors.white54),
                                         ),
                                     ],
                                   ),

@@ -259,6 +259,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
             season: _seasons[_selectedSeason].seasonNumber,
             episodeNumber: ep.episodeNumber,
             episodeTitle: ep.displayTitle,
+            absoluteEpisode: ep.absoluteEpisodeNumber,
             availableLanguages: ep.availableLanguages,
           ),
         ))
@@ -292,6 +293,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
               season: prog.season,
               episodeNumber: nextNum,
               episodeTitle: nextEp?.displayTitle ?? 'Folge $nextNum',
+              absoluteEpisode: nextEp?.absoluteEpisodeNumber,
               availableLanguages: nextEp?.availableLanguages ?? [],
             ),
           ))
@@ -310,6 +312,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
             season: prog.season,
             episodeNumber: prog.episodeNumber,
             episodeTitle: ep?.displayTitle ?? prog.episodeTitle ?? 'Folge ${prog.episodeNumber}',
+            absoluteEpisode: ep?.absoluteEpisodeNumber,
             availableLanguages: ep?.availableLanguages ?? [],
           ),
         ))
@@ -1061,6 +1064,18 @@ class _EpisodeRow extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                           color: Rs.text),
                     ),
+                    if (ep.absoluteEpisodeNumber != null &&
+                        ep.absoluteEpisodeNumber != ep.episodeNumber)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          'Episode #${ep.absoluteEpisodeNumber} gesamt',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Rs.muted),
+                        ),
+                      ),
                     const SizedBox(height: 6),
                     if (ep.availableLanguages.isNotEmpty)
                       Text(
