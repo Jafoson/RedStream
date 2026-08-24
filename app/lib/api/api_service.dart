@@ -462,6 +462,11 @@ class ApiService {
     return resp.data ?? {};
   }
 
+  Future<StorageStats> getStorageStats() async {
+    final resp = await _dio.get<Map<String, dynamic>>('/api/storage-stats');
+    return StorageStats.fromJson(resp.data ?? {});
+  }
+
   // ── Profiles ──────────────────────────────────────────────────────────────
   Future<List<Profile>> getProfiles() async {
     final resp = await _dio.get<Map<String, dynamic>>('/api/profiles');

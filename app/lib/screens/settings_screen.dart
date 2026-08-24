@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../models/models.dart';
 import '../navigation/app_nav.dart';
 import '../providers/providers.dart';
 import '../theme/rs_theme.dart';
@@ -31,17 +32,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _urlFocus = FocusNode(skipTraversal: true);
   bool _saved = false;
   String _appVersion = '';
+  StorageStats? _storage;
+  bool _storageLoading = true;
 
   @override
   void initState() {
     super.initState();
     _url = ref.read(serverUrlProvider);
     _loadVersion();
+    _loadStorage();
   }
 
   Future<void> _loadVersion() async {
     final info = await PackageInfo.fromPlatform();
     if (mounted) setState(() => _appVersion = info.version);
+  }
+
+  Future<void> _loadStorage() async {
+    try {
+      final stats = await ref.read(apiServiceProvider).getStorageStats();
+      if (mounted) setState(() { _storage = stats; _storageLoading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _storageLoading = false);
+    }
   }
 
   @override
@@ -166,6 +179,41 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ],
               ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 32),
+
+        // ── Storage ──────────────────────────────────────────────────────
+        _Section(
+          title: 'Speicher',
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: _storageLoading
+                  ? const Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Rs.accent),
+                      ),
+                    )
+                  : (_storage == null || _storage!.roots.isEmpty)
+                      ? Text('Speicherinfo nicht verfügbar',
+                          style: tt.bodyMedium?.copyWith(color: Colors.white38))
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (final root in _storage!.roots) ...[
+                              _StorageUsageRow(
+                                  root: root,
+                                  showLabel: _storage!.roots.length > 1),
+                              const SizedBox(height: 14),
+                            ],
+                          ],
+                        ),
             ),
           ],
         ),
@@ -481,6 +529,55 @@ class _UpdateButtonState extends State<_UpdateButton> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ── Storage usage row ─────────────────────────────────────────────────────────
+
+class _StorageUsageRow extends StatelessWidget {
+  final StorageRoot root;
+  final bool showLabel;
+  const _StorageUsageRow({required this.root, required this.showLabel});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasDiskInfo = root.diskTotalBytes > 0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              showLabel ? root.label : 'Downloads',
+              style: const TextStyle(
+                  color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            const Spacer(),
+            Text(formatBytes(root.downloadsBytes),
+                style: const TextStyle(color: Colors.white54, fontSize: 13)),
+          ],
+        ),
+        if (hasDiskInfo) ...[
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: root.diskUsedFraction,
+              backgroundColor: Colors.white12,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                root.diskUsedFraction > 0.9 ? Colors.redAccent : Rs.accent,
+              ),
+              minHeight: 5,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${formatBytes(root.diskFreeBytes)} frei von ${formatBytes(root.diskTotalBytes)} auf dem Server',
+            style: const TextStyle(color: Colors.white38, fontSize: 12),
+          ),
+        ],
+      ],
     );
   }
 }

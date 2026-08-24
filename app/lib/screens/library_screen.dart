@@ -44,11 +44,20 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   final _scrollCtrl = ScrollController();
   final _rowKeys = <int, GlobalKey>{};
   final _expanded = <int>{};
+  StorageStats? _storage;
 
   @override
   void initState() {
     super.initState();
     widget.nav.addListener(_onNavChanged);
+    _loadStorage();
+  }
+
+  Future<void> _loadStorage() async {
+    try {
+      final stats = await ref.read(apiServiceProvider).getStorageStats();
+      if (mounted) setState(() => _storage = stats);
+    } catch (_) {}
   }
 
   @override
@@ -201,6 +210,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             ],
           ),
         ),
+
+        if (_storage != null && _storage!.roots.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(32, 0, 32, 20),
+            child: _StorageBanner(storage: _storage!),
+          ),
 
         Expanded(
           child: state.when(
@@ -506,5 +521,83 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
     }
     return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Storage summary banner — RedStream's own usage vs. the host disk it lives on
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _StorageBanner extends StatelessWidget {
+  final StorageStats storage;
+  const _StorageBanner({required this.storage});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final root in storage.roots) ...[
+          _StorageRootRow(root: root, showLabel: storage.roots.length > 1),
+          const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+}
+
+class _StorageRootRow extends StatelessWidget {
+  final StorageRoot root;
+  final bool showLabel;
+  const _StorageRootRow({required this.root, required this.showLabel});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasDiskInfo = root.diskTotalBytes > 0;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF2A2A2A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.storage_rounded, size: 16, color: Colors.white38),
+              const SizedBox(width: 8),
+              Text(
+                showLabel ? '${root.label}: ${formatBytes(root.downloadsBytes)}' : 'RedStream-Downloads: ${formatBytes(root.downloadsBytes)}',
+                style: const TextStyle(
+                    color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              if (hasDiskInfo) ...[
+                const Spacer(),
+                Text(
+                  '${formatBytes(root.diskFreeBytes)} frei von ${formatBytes(root.diskTotalBytes)}',
+                  style: const TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+          if (hasDiskInfo) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: root.diskUsedFraction,
+                backgroundColor: Colors.white12,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  root.diskUsedFraction > 0.9 ? Colors.redAccent : Rs.accent,
+                ),
+                minHeight: 5,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }

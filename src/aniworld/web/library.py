@@ -328,3 +328,50 @@ def list_titles_with_meta(custom_path_id=None, lang_folder=None):
 
 def custom_path_labels():
     return {entry["id"]: entry["name"] for entry in db.get_custom_paths()}
+
+
+def _dir_size(path):
+    """Sum of file sizes under `path`. Skips files that vanish mid-walk."""
+    total = 0
+    if not path.is_dir():
+        return 0
+    for entry in path.rglob("*"):
+        if entry.is_file():
+            try:
+                total += entry.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def usage_summary():
+    """Storage usage per download root: bytes RedStream has downloaded there,
+    plus the host filesystem's total/used/free for that mount (so a Docker
+    bind-mount reports the real disk behind it, not the container's own size).
+    """
+    roots = []
+    total_downloads_bytes = 0
+
+    for label, path_id, root in paths.download_roots():
+        downloads_bytes = _dir_size(root)
+        total_downloads_bytes += downloads_bytes
+
+        stat_target = root if root.exists() else root.parent
+        try:
+            disk_total, disk_used, disk_free = shutil.disk_usage(stat_target)
+        except OSError:
+            disk_total = disk_used = disk_free = 0
+
+        roots.append(
+            {
+                "label": label,
+                "custom_path_id": path_id,
+                "path": str(root),
+                "downloads_bytes": downloads_bytes,
+                "disk_total_bytes": disk_total,
+                "disk_used_bytes": disk_used,
+                "disk_free_bytes": disk_free,
+            }
+        )
+
+    return {"roots": roots, "total_downloads_bytes": total_downloads_bytes}

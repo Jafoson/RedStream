@@ -1246,6 +1246,32 @@ def get_watch_progress(episode_url, profile_id=1):
         conn.close()
 
 
+def is_episode_completed_for_all_profiles(episode_url):
+    """True only if every existing profile has marked this episode completed.
+
+    A profile with no watch_progress row at all for this episode counts as
+    "not watched" (not "not applicable") — the smart-cleanup feature relies
+    on this to never delete something a profile hasn't seen yet.
+    """
+    conn = get_db()
+    try:
+        profile_ids = [r["id"] for r in conn.execute("SELECT id FROM profiles").fetchall()]
+        if not profile_ids:
+            return False
+        placeholders = ",".join("?" * len(profile_ids))
+        rows = conn.execute(
+            f"""
+            SELECT profile_id FROM watch_progress
+            WHERE episode_url = ? AND completed = 1 AND profile_id IN ({placeholders})
+            """,
+            (episode_url, *profile_ids),
+        ).fetchall()
+        completed_ids = {r["profile_id"] for r in rows}
+        return completed_ids == set(profile_ids)
+    finally:
+        conn.close()
+
+
 def get_episode_progress_for_urls(episode_urls, profile_id=1):
     """Returns {episode_url: dict} for the given list of URLs."""
     if not episode_urls:

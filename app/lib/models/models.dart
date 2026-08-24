@@ -465,9 +465,64 @@ class LibraryTitle {
     return match?.group(1)?.trim() ?? folder;
   }
 
-  String get sizeFormatted {
-    if (totalSize < 1024 * 1024) return '${(totalSize / 1024).toStringAsFixed(1)} KB';
-    if (totalSize < 1024 * 1024 * 1024) return '${(totalSize / 1024 / 1024).toStringAsFixed(1)} MB';
-    return '${(totalSize / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
-  }
+  String get sizeFormatted => formatBytes(totalSize);
+}
+
+// ---------------------------------------------------------------------------
+// Storage stats
+// ---------------------------------------------------------------------------
+
+String formatBytes(int bytes) {
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  if (bytes < 1024 * 1024 * 1024) return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
+}
+
+class StorageRoot {
+  final String label;
+  final int? customPathId;
+  final String path;
+  final int downloadsBytes;
+  final int diskTotalBytes;
+  final int diskUsedBytes;
+  final int diskFreeBytes;
+
+  const StorageRoot({
+    required this.label,
+    this.customPathId,
+    required this.path,
+    required this.downloadsBytes,
+    required this.diskTotalBytes,
+    required this.diskUsedBytes,
+    required this.diskFreeBytes,
+  });
+
+  factory StorageRoot.fromJson(Map<String, dynamic> j) => StorageRoot(
+        label: j['label'] as String? ?? '',
+        customPathId: j['custom_path_id'] as int?,
+        path: j['path'] as String? ?? '',
+        downloadsBytes: (j['downloads_bytes'] as num?)?.toInt() ?? 0,
+        diskTotalBytes: (j['disk_total_bytes'] as num?)?.toInt() ?? 0,
+        diskUsedBytes: (j['disk_used_bytes'] as num?)?.toInt() ?? 0,
+        diskFreeBytes: (j['disk_free_bytes'] as num?)?.toInt() ?? 0,
+      );
+
+  double get diskUsedFraction =>
+      diskTotalBytes > 0 ? (diskUsedBytes / diskTotalBytes).clamp(0.0, 1.0) : 0.0;
+}
+
+class StorageStats {
+  final List<StorageRoot> roots;
+  final int totalDownloadsBytes;
+
+  const StorageStats({required this.roots, required this.totalDownloadsBytes});
+
+  factory StorageStats.fromJson(Map<String, dynamic> j) => StorageStats(
+        roots: (j['roots'] as List? ?? [])
+            .map((e) => StorageRoot.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        totalDownloadsBytes: (j['total_downloads_bytes'] as num?)?.toInt() ?? 0,
+      );
+
+  static const empty = StorageStats(roots: [], totalDownloadsBytes: 0);
 }

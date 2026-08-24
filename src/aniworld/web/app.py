@@ -76,6 +76,7 @@ from .db import (
     init_series_language_prefs_db,
     init_watch_progress_db,
     init_watchlist_db,
+    is_episode_completed_for_all_profiles,
     is_in_watchlist,
     is_queue_cancelled,
     is_series_queued_or_running,
@@ -1516,6 +1517,28 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         target=_midnight_refresh_loop, name="aniworld-midnight-refresh", daemon=True
     ).start()
 
+    # Separate, shorter-lived cache from _browse_cache: a full directory walk
+    # is heavier than a browse-list fetch, but disk usage also changes more
+    # often (every download), so 1h would be too stale.
+    _storage_cache = {}
+    _STORAGE_TTL = 300  # 5 minutes
+
+    @app.route("/api/storage-stats")
+    def api_storage_stats():
+        from . import library
+
+        now = _time.time()
+        entry = _storage_cache.get("stats")
+        if entry and now - entry[0] < _STORAGE_TTL:
+            return jsonify(entry[1])
+        try:
+            stats = library.usage_summary()
+        except Exception as exc:
+            logger.warning(f"Storage usage scan failed: {exc}")
+            return jsonify({"error": "Failed to compute storage usage"}), 500
+        _storage_cache["stats"] = (now, stats)
+        return jsonify(stats)
+
     @app.route("/api/tmdb-poster")
     def api_tmdb_poster():
         title = request.args.get("title", "").strip()
@@ -2448,6 +2471,57 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         clear_series_language(profile_id, series_url)
         return jsonify({"ok": True})
 
+    def _resolve_downloaded_file(stream_file):
+        """stream_file is relative to whichever download root it lives under
+        (default path or a custom path) — same search order as /api/stream/url."""
+        from pathlib import Path as _Path
+
+        raw = os.environ.get("ANIWORLD_DOWNLOAD_PATH", "")
+        default_base = _Path(raw).expanduser() if raw else _Path.home() / "Downloads"
+        if raw and not default_base.is_absolute():
+            default_base = _Path.home() / default_base
+
+        bases = [default_base]
+        for cp in get_custom_paths():
+            cp_path = _Path(cp["path"]).expanduser()
+            if not cp_path.is_absolute():
+                cp_path = _Path.home() / cp_path
+            bases.append(cp_path)
+
+        for base in bases:
+            candidate = base / stream_file
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def _smart_cleanup_watched_episode(episode_url, stream_file):
+        """Auto-delete a downloaded episode/movie once every profile has
+        watched it (see is_episode_completed_for_all_profiles). Deletes the
+        .m3u8 and every _NNN.ts segment sharing its filename stem, then
+        removes any directory left empty — mirrors how the download pipeline
+        writes HLS output (models/common/common.py), so this works uniformly
+        for episodes and movies alike without needing SxxExx parsing."""
+        if not is_episode_completed_for_all_profiles(episode_url):
+            return
+        target = _resolve_downloaded_file(stream_file)
+        if target is None:
+            return
+        stem = target.stem
+        parent = target.parent
+        deleted = 0
+        for f in parent.iterdir():
+            if f.is_file() and f.name.startswith(stem):
+                try:
+                    f.unlink()
+                    deleted += 1
+                except OSError as exc:
+                    logger.warning(f"Smart cleanup: could not delete {f}: {exc}")
+        if deleted:
+            logger.info(f"Smart cleanup: removed {deleted} file(s) for watched '{stem}'")
+            from . import library
+
+            library._prune_empty(parent)
+
     @app.route("/api/progress", methods=["POST"])
     def api_save_progress():
         data = request.get_json(force=True) or {}
@@ -2467,6 +2541,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
                 if prefix in path:
                     stream_file = unquote(path[path.index(prefix) + len(prefix):])
             from flask import g as _g
+            completed = bool(data.get("completed", False))
             upsert_watch_progress(
                 episode_url=episode_url,
                 series_title=data.get("series_title"),
@@ -2476,10 +2551,15 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
                 episode_title=data.get("episode_title"),
                 position_seconds=float(data.get("position_seconds") or 0),
                 duration_seconds=float(data.get("duration_seconds") or 0),
-                completed=bool(data.get("completed", False)),
+                completed=completed,
                 stream_file=stream_file,
                 profile_id=getattr(_g, "profile_id", 1),
             )
+            if completed and stream_file:
+                try:
+                    _smart_cleanup_watched_episode(episode_url, stream_file)
+                except Exception as exc:
+                    logger.warning(f"Smart cleanup failed for {episode_url}: {exc}")
             return jsonify({"ok": True})
         except Exception as e:
             logger.error(f"Save progress failed: {e}", exc_info=True)
