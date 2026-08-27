@@ -11,6 +11,18 @@ body,
   overflow: hidden;
 }
 
+/* Tells TV-platform browsers with a built-in D-pad/remote spatial-navigation
+ * engine (Samsung Tizen, some Chromium builds behind the CSS Spatial
+ * Navigation flag) that this app already implements its own arrow-key
+ * navigation (tv/FocusEngine.tsx) — without this, the browser's native
+ * engine can move DOM focus on its own in response to the same D-pad
+ * arrow-key events FocusEngine listens for, fighting our custom `.is-foc`
+ * highlight and potentially focusing elements FocusEngine doesn't know
+ * about. https://www.w3.org/TR/css-nav-1/#spatial-navigation-contain */
+html {
+  spatial-navigation-contain: contain;
+}
+
 a {
   color: inherit;
   text-decoration: none;
