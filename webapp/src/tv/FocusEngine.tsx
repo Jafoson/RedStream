@@ -71,8 +71,33 @@ interface FocusContextValue {
 
 const FocusContext = createContext<FocusContextValue | null>(null)
 
+// Persists ONLY "keyboard focus was sitting in the sidebar, on this row"
+// across a real page reload — sessionStorage (not localStorage), since this
+// is "resume exactly where I left off in this browsing session," not
+// something that should survive into a fresh session later. Content's own
+// row/col deliberately does NOT round-trip here: it's meant to always start
+// at the top on a new page mount, reload included (see registerNav's
+// resetToTop) — the sidebar is the one piece of "which UI region has D-pad
+// focus" worth remembering, since unlike content position, a reload
+// otherwise silently drops the user back into content even if they were
+// deliberately navigating via the sidebar the moment they reloaded.
+const SIDEBAR_FOCUS_KEY = 'rstv_sidebar_focus_row'
+
+function loadInitialFocus(): FocusState {
+  try {
+    const raw = sessionStorage.getItem(SIDEBAR_FOCUS_KEY)
+    if (raw !== null) {
+      const row = parseInt(raw, 10)
+      if (Number.isFinite(row) && row >= 0) return { region: 'sidebar', row, col: 0, origin: 'keyboard' }
+    }
+  } catch {
+    // sessionStorage unavailable -- just falls through to the normal default
+  }
+  return { region: 'content', row: 0, col: 0, origin: 'keyboard' }
+}
+
 export function FocusProvider({ children }: { children: ReactNode }) {
-  const [focus, setFocusState] = useState<FocusState>({ region: 'content', row: 0, col: 0, origin: 'keyboard' })
+  const [focus, setFocusState] = useState<FocusState>(loadInitialFocus)
   const focusRef = useRef(focus)
   focusRef.current = focus
 
@@ -163,10 +188,19 @@ export function FocusProvider({ children }: { children: ReactNode }) {
       contentNavRef.current = { lengths, activate, colMode }
       rowColMemoryRef.current = {}
       setFocusState((f) => {
+        // Guard against BOTH branches below applies here, not just the
+        // clamp one — `row`/`col` mean "which content grid cell" only when
+        // region is 'content'; while region is 'sidebar' the very same
+        // fields mean "which sidebar row" instead. A new page's registerNav
+        // firing while the user is still navigating via the sidebar (a real
+        // sequence: sidebar Up/Down auto-activates each tab it passes
+        // through, per Sidebar's own design) must never touch them, or it
+        // silently resets the sidebar's own focus row back to 0 instead of
+        // leaving the user on whichever tab they'd actually navigated to.
+        if (f.region !== 'content') return f
         if (resetToTop) {
           return f.row === 0 && f.col === 0 ? f : { ...f, row: 0, col: 0 }
         }
-        if (f.region !== 'content') return f
         const row = Math.min(f.row, Math.max(0, lengths.length - 1))
         const col = Math.min(f.col, Math.max(0, (lengths[row] || 1) - 1))
         return row === f.row && col === f.col ? f : { ...f, row, col }
@@ -194,6 +228,18 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     window.addEventListener('mousemove', onMouseMove)
     return () => window.removeEventListener('mousemove', onMouseMove)
   }, [])
+
+  // Keeps sessionStorage in sync with "is keyboard focus currently in the
+  // sidebar, on which row" — see loadInitialFocus above for why only this
+  // (not content's row/col) round-trips across a reload.
+  useEffect(() => {
+    try {
+      if (focus.region === 'sidebar') sessionStorage.setItem(SIDEBAR_FOCUS_KEY, String(focus.row))
+      else sessionStorage.removeItem(SIDEBAR_FOCUS_KEY)
+    } catch {
+      // sessionStorage unavailable -- this is a nice-to-have, fails silently
+    }
+  }, [focus.region, focus.row])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

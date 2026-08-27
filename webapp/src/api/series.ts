@@ -40,6 +40,11 @@ export interface Episode {
   // overall. `null` when the backend couldn't build the cumulative count
   // (e.g. a season with an unknown episode_count).
   absolute_episode_number: number | null
+  // A frame grabbed from the episode itself — only exists once the episode
+  // has actually been *played* at least once (generated lazily by
+  // thumbnails.py, not at download time), so this is commonly null for
+  // downloaded-but-unwatched episodes.
+  preview_url: string | null
 }
 
 export function getEpisodes(seasonUrl: string): Promise<Episode[]> {

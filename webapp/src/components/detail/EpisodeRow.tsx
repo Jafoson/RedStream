@@ -1,6 +1,7 @@
 import type { Episode } from '../../api/series'
 import type { ProgressEntry } from '../../api/stream'
 import { posterArtStyle } from '../common/PosterCard'
+import { useFallbackImage } from '../common/useFallbackImage'
 import { Icon } from '../layout/icons'
 import { useCellFocus } from '../../tv/FocusEngine'
 
@@ -12,15 +13,21 @@ export interface EpisodeRowProps {
    * i.e. "up next" in the Netflix sense, even though it has no progress of
    * its own yet. */
   isNextUp?: boolean
+  // Series' own horizontal/landscape backdrop — falls back to this when the
+  // episode has no preview image of its own yet (only generated the first
+  // time an episode is actually played, so most downloaded-but-unwatched
+  // episodes have none).
+  seriesBackdropUrl?: string | null
   onClick: () => void
 }
 
-export function EpisodeRow({ episode, progress, rowIndex, isNextUp, onClick }: EpisodeRowProps) {
+export function EpisodeRow({ episode, progress, rowIndex, isNextUp, seriesBackdropUrl, onClick }: EpisodeRowProps) {
   const { isFocused, onHover } = useCellFocus(rowIndex, 0)
   const ratio = progress && progress.duration_seconds > 0 ? progress.position_seconds / progress.duration_seconds : 0
   const watched = !!progress?.completed
   const inProgress = ratio > 0 && !watched
   const title = episode.title_de || episode.title_en || `Episode ${episode.episode_number}`
+  const { src: imgSrc, onError } = useFallbackImage([episode.preview_url, seriesBackdropUrl])
 
   return (
     <div
@@ -30,7 +37,11 @@ export function EpisodeRow({ episode, progress, rowIndex, isNextUp, onClick }: E
       onClick={onClick}
     >
       <div className="ep-thumb">
-        <div className="poster-art" style={posterArtStyle(title)} />
+        {imgSrc ? (
+          <img className="poster-art poster-art--img" src={imgSrc} alt="" loading="lazy" onError={onError} />
+        ) : (
+          <div className="poster-art" style={posterArtStyle(title)} />
+        )}
         <div className="poster-grain" />
         <div className="ep-num">F{episode.episode_number}</div>
         {inProgress && (

@@ -2135,23 +2135,46 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
         ep_re = re.compile(rf"S{season:02d}E{episode:03d}(?!\d)", re.IGNORECASE)
 
+        def find_match(candidates):
+            for f in candidates:
+                if ep_re.search(f.name):
+                    return f
+            return None
+
         for base in search_bases:
             series_dir = base / folder
             if not series_dir.is_dir():
                 continue
-            for f in series_dir.rglob("*.m3u8"):
-                if not ep_re.search(f.name):
-                    continue
-                try:
-                    rel = f.relative_to(base)
-                except ValueError:
-                    continue
-                stream_url = url_for(
-                    "api_stream_file",
-                    filepath=rel.as_posix(),
-                    _external=True,
-                )
-                return jsonify({"url": stream_url})
+
+            # Fast path: scoped to the expected "Season N" subdirectory (the
+            # default NAMING_TEMPLATE's own layout) instead of recursively
+            # walking every season — avoids scandir-ing every OTHER season's
+            # .ts segment files just to find one already-known episode's
+            # .m3u8, which was the dominant cost of the previous unscoped
+            # `series_dir.rglob(...)` here (measured ~300ms on a real
+            # multi-season library — this single endpoint was the single
+            # biggest remaining source of "already-downloaded episodes take
+            # a long time to start playing" after several frontend-side
+            # fixes). Falls back to the full recursive scan for a custom
+            # ANIWORLD_NAMING_TEMPLATE that doesn't use a "Season N"
+            # subfolder, so this stays correct for every configured layout.
+            season_dir = series_dir / f"Season {season}"
+            matched = find_match(season_dir.glob("*.m3u8")) if season_dir.is_dir() else None
+            if matched is None:
+                matched = find_match(series_dir.rglob("*.m3u8"))
+            if matched is None:
+                continue
+
+            try:
+                rel = matched.relative_to(base)
+            except ValueError:
+                continue
+            stream_url = url_for(
+                "api_stream_file",
+                filepath=rel.as_posix(),
+                _external=True,
+            )
+            return jsonify({"url": stream_url})
 
         return jsonify({"error": "Episode not found"}), 404
 
@@ -2462,13 +2485,25 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             if title not in poster_cache:
                 try:
                     tmdb = search_tmdb(title)
-                    poster_cache[title] = _proxy_image_url(tmdb.get("poster_url") or "")
+                    poster_cache[title] = (
+                        _proxy_image_url(tmdb.get("poster_url") or ""),
+                        # Horizontal/landscape backdrop, not the tall poster —
+                        # used by the web app as a fallback for an episode's
+                        # own preview image (only generated the first time an
+                        # episode is actually played, see thumbnails.py) so a
+                        # never-watched episode's Weiterschauen card shows
+                        # something contextual instead of a generic
+                        # letter/gradient placeholder.
+                        _proxy_image_url(tmdb.get("backdrop_url") or ""),
+                    )
                 except Exception:
-                    poster_cache[title] = ""
+                    poster_cache[title] = ("", "")
             pkey = (title.lower(), row.get("season") or 0, row.get("episode_number") or 0)
+            poster_url, backdrop_url = poster_cache[title]
             enriched.append({
                 **row,
-                "poster_url": poster_cache[title],
+                "poster_url": poster_url,
+                "backdrop_url": backdrop_url,
                 "preview_url": preview_map.get(pkey, ""),
             })
 

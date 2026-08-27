@@ -102,6 +102,10 @@ export interface ProgressEntry {
   duration_seconds: number
   completed: boolean
   poster_url?: string
+  // Horizontal/landscape TMDB backdrop for the series — used as a fallback
+  // when preview_url is empty (episode never played, so its own preview
+  // frame hasn't been generated yet — see thumbnails.py).
+  backdrop_url?: string
   preview_url?: string
 }
 

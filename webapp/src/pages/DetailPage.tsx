@@ -178,6 +178,7 @@ export function DetailPage() {
           available_languages: [],
           folder: null,
           absolute_episode_number: null,
+          preview_url: null,
         },
         current ? findNextEpisode(list, current) : null,
         frontier.season,
@@ -280,7 +281,12 @@ export function DetailPage() {
     const seasonNumber = activeSeason.season_number
     ;(async () => {
       try {
-        const library = await getLibrary()
+        // Same ['library'] react-query cache DownloadPlayPage's own check
+        // reads — sharing it means clicking Play moments after this prefetch
+        // check ran (the common case: land on Detail, glance at it, hit
+        // Play) gets an instant cache hit there instead of re-fetching the
+        // whole library a second time.
+        const library = await queryClient.fetchQuery({ queryKey: ['library'], queryFn: getLibrary, staleTime: 30_000 })
         const folder = findDownloadedFolder(library, detail.data!.title, seasonNumber, first.episode_number)
         if (folder) {
           try {
@@ -369,6 +375,7 @@ export function DetailPage() {
             episode={episode}
             progress={progressByEpisode.get(episode.url) ?? null}
             rowIndex={episodeRowBase + i}
+            seriesBackdropUrl={detail.data?.backdrop_url}
             isNextUp={
               !!frontier &&
               resumeIsNextEp &&

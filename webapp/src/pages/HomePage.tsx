@@ -272,6 +272,7 @@ function ContinueCell({
       episodeLabel={`S${season}:E${episodeNumber}`}
       left={remaining !== null ? `${remaining} min übrig` : undefined}
       thumbnailUrl={upNext ? undefined : p.preview_url}
+      seriesBackdropUrl={p.backdrop_url}
       progress={ratio}
       focused={isFocused}
       onHover={onHover}

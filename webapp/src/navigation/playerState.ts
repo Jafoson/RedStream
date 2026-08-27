@@ -55,4 +55,13 @@ export interface PlayerState {
   provider: string
   customPathId?: number | null
   nextEpisode?: NextEpisodeRef | null
+  // Set when DownloadPlayPage already resolved+verified the .m3u8 URL while
+  // confirming the episode is downloaded (it has to fetch this anyway just
+  // to check the file really exists) — PlayerPage reuses it instead of
+  // fetching the identical URL again a moment later, cutting a real
+  // backend round-trip out of the already-downloaded fast path. Absent for
+  // entry points that never resolved it (shouldn't normally happen once the
+  // library fast path is taken, but PlayerPage falls back to fetching it
+  // itself if missing).
+  streamUrl?: string
 }

@@ -3,6 +3,7 @@
 // for it, showing ffmpeg progress in the meantime.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { findDownloadedFolder, getLibrary } from '../api/library'
 import { getStreamUrl } from '../api/stream'
 import { findNextEpisodeAfter, getPreferredLanguage } from '../api/series'
@@ -16,6 +17,7 @@ const LIBRARY_POLL_MS = 3000
 export function DownloadPlayPage() {
   const { state } = useLocation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const s = state as DownloadPlayState | null
 
   const [status, setStatus] = useState<'resolving' | 'queued' | 'downloading' | 'failed'>('resolving')
@@ -32,7 +34,7 @@ export function DownloadPlayPage() {
   })
 
   const goToPlayer = useCallback(
-    (folder: string) => {
+    (folder: string, streamUrl?: string) => {
       if (!s) return
       const { language, nextEpisode } = resolvedRef.current
       const playerState: PlayerState = {
@@ -48,25 +50,64 @@ export function DownloadPlayPage() {
         provider: s.provider,
         customPathId: s.customPathId,
         nextEpisode,
+        streamUrl,
       }
       navigate('/watch', { replace: true, state: playerState })
     },
     [s, navigate],
   )
 
-  const tryResolveFromLibrary = useCallback(async (): Promise<boolean> => {
-    if (!s) return false
-    const library = await getLibrary()
+  // Finds the folder for an already-downloaded episode WITHOUT navigating —
+  // split out from tryResolveFromLibrary below so start() can run this
+  // concurrently with resolving language/nextEpisode and only call
+  // goToPlayer (which reads resolvedRef) once both are actually done,
+  // instead of racing them.
+  const findFolderInLibrary = useCallback(async (): Promise<{ folder: string; streamUrl: string } | null> => {
+    if (!s) return null
+    // Routed through react-query's cache (same ['library'] key LibraryPage's
+    // own useQuery already populates) instead of a raw fetch every time —
+    // this was the actual cause of "already-downloaded episodes take forever
+    // to start," reported as much slower than the native Flutter app despite
+    // hitting the identical backend: every single click here re-fetched and
+    // re-parsed the *entire* library listing from scratch, even seconds
+    // after DetailPage's own prefetch check had just fetched the exact same
+    // data. A short staleTime is enough — this is a "does the file already
+    // exist" check, not something that needs to be millisecond-fresh, and a
+    // stale cache only costs a slightly-too-eager fallback to the
+    // download-queue path, never incorrect playback.
+    const library = await queryClient.fetchQuery({ queryKey: ['library'], queryFn: getLibrary, staleTime: 30_000 })
     const folder = findDownloadedFolder(library, s.seriesTitle, s.season, s.episodeNumber)
-    if (!folder) return false
+    if (!folder) return null
     try {
-      await getStreamUrl({ folder, season: s.season, episode: s.episodeNumber, customPathId: s.customPathId })
+      // Fetched here purely to VERIFY the file really exists — but the
+      // result is the exact same URL PlayerPage would otherwise fetch again
+      // itself a moment later, so it's threaded through via goToPlayer's
+      // streamUrl param instead of being thrown away, cutting a real
+      // duplicate backend round-trip out of the already-downloaded fast
+      // path (confirmed via a real network trace: this call and PlayerPage's
+      // own were the two single biggest contributors to time-to-playable).
+      const streamUrl = await getStreamUrl({
+        folder,
+        season: s.season,
+        episode: s.episodeNumber,
+        customPathId: s.customPathId,
+      })
+      return { folder, streamUrl }
     } catch {
-      return false
+      return null
     }
-    goToPlayer(folder)
+  }, [s, queryClient])
+
+  // Used by the queue-completion and library-poll fallback paths, both of
+  // which fire well after start()'s own resolvePromise has long since
+  // finished — safe to navigate immediately here, unlike the initial
+  // concurrent race in start() below.
+  const tryResolveFromLibrary = useCallback(async (): Promise<boolean> => {
+    const found = await findFolderInLibrary()
+    if (!found) return false
+    goToPlayer(found.folder, found.streamUrl)
     return true
-  }, [s, goToPlayer])
+  }, [findFolderInLibrary, goToPlayer])
 
   useEffect(() => {
     if (!s || startedRef.current) return
@@ -109,15 +150,37 @@ export function DownloadPlayPage() {
       // navigated) rather than before navigating, so clicking Play/next-
       // episode feels instant instead of the trigger sitting unresponsive
       // for a network round-trip with no visible feedback.
-      const language = s!.language ?? (await getPreferredLanguage(s!.seriesUrl).catch(() => 'German Dub'))
-      const nextEpisode =
-        s!.nextEpisode !== undefined
-          ? s!.nextEpisode
-          : await findNextEpisodeAfter(s!.seriesUrl, s!.season, s!.episodeNumber)
-      resolvedRef.current = { language, nextEpisode }
+      //
+      // Started here but NOT awaited yet — it runs concurrently with the
+      // library check below rather than blocking it. Neither language nor
+      // nextEpisode gates actually starting playback (PlayerPage only uses
+      // them for background/auxiliary purposes: the next-episode prefetch
+      // download and the auto-advance button), so making the already-
+      // downloaded fast path wait for a language lookup plus a two-request
+      // season/episode lookup *before even checking whether the file is
+      // already on disk* was pure wasted latency on the single most common
+      // click in the app (rewatching/continuing something already
+      // downloaded) — this is what actually made playback starts feel much
+      // slower than the native app hitting the same backend.
+      const resolvePromise = (async () => {
+        const language = s!.language ?? (await getPreferredLanguage(s!.seriesUrl).catch(() => 'German Dub'))
+        const nextEpisode =
+          s!.nextEpisode !== undefined
+            ? s!.nextEpisode
+            : await findNextEpisodeAfter(s!.seriesUrl, s!.season, s!.episodeNumber)
+        resolvedRef.current = { language, nextEpisode }
+      })()
 
-      // 1. Already downloaded?
-      if (await tryResolveFromLibrary()) return
+      // 1. Already downloaded? Runs concurrently with resolvePromise above.
+      // Both are awaited together before calling goToPlayer (which reads
+      // resolvedRef) — findFolderInLibrary alone, unlike tryResolveFromLibrary,
+      // doesn't navigate itself, specifically so this can't race ahead of
+      // resolvePromise finishing and read a still-default resolvedRef.
+      const [, found] = await Promise.all([resolvePromise, findFolderInLibrary()])
+      if (found) {
+        goToPlayer(found.folder, found.streamUrl)
+        return
+      }
 
       // 2. Already queued/running from elsewhere?
       let id = await findQueueItemByEpisode(s!.episodeUrl)
@@ -126,7 +189,7 @@ export function DownloadPlayPage() {
           title: s!.seriesTitle,
           series_url: s!.seriesUrl,
           episodes: [s!.episodeUrl],
-          language,
+          language: resolvedRef.current.language,
           provider: s!.provider,
           custom_path_id: s!.customPathId ?? undefined,
           priority: 0,

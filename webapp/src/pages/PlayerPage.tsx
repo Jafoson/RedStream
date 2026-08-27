@@ -55,11 +55,21 @@ export function PlayerPage() {
     nextSegmentPrefetchedRef.current = false
     nextEpisodeAdvancedRef.current = false
 
-    getStreamUrl({ folder: s.folder, season: s.season, episode: s.episodeNumber, customPathId: s.customPathId }).then(
-      (url) => {
-        if (!cancelled) setStreamUrl(url)
-      },
-    )
+    // DownloadPlayPage already fetches (and has to, to verify the file
+    // actually exists) this exact URL for the already-downloaded fast path
+    // — reuse it instead of fetching the identical URL again here, cutting a
+    // real backend round-trip out of the most common click in the app.
+    // Falls back to fetching it directly for entry points that don't have
+    // it (shouldn't normally happen once the library fast path is taken).
+    if (s.streamUrl) {
+      setStreamUrl(s.streamUrl)
+    } else {
+      getStreamUrl({ folder: s.folder, season: s.season, episode: s.episodeNumber, customPathId: s.customPathId }).then(
+        (url) => {
+          if (!cancelled) setStreamUrl(url)
+        },
+      )
+    }
 
     getSkipTimes(s.seriesTitle, s.episodeNumber)
       .then((t) => !cancelled && setSkipTimes(t))
