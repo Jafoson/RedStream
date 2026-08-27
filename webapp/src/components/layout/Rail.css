@@ -1,0 +1,22 @@
+.section {
+  margin: 30px 0 6px;
+}
+.rail {
+  display: flex;
+  gap: 20px;
+  /* Focused cards scale up (transform: scale(1.07), see .poster.is-foc /
+     .cw.is-foc) — top/bottom padding must exceed that overflow or
+     overflow-y:hidden (needed to keep native horizontal scrolling from also
+     scrolling vertically) clips the artwork at the row edges. */
+  padding: 22px 44px 28px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+}
+.rail::-webkit-scrollbar {
+  display: none;
+}
+.row-anchor {
+  scroll-margin-top: 24px;
+}

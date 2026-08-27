@@ -44,9 +44,15 @@ Always accessible (no auth required).
 
 Response:
 ```json
-{ "auth_enabled": true, "setup_needed": false }
+{
+  "auth_enabled": true,
+  "setup_needed": false,
+  "oidc_enabled": false,
+  "oidc_display_name": "SSO",
+  "force_sso": false
+}
 ```
-`setup_needed: true` means no admin account exists yet — call `/api/auth/setup` next.
+`setup_needed: true` means no admin account exists yet — call `/api/auth/setup` next. `oidc_enabled`/`oidc_display_name`/`force_sso` tell a client whether to show an SSO login button and whether to hide the local username/password form.
 
 ---
 
@@ -184,11 +190,13 @@ Response:
       "title_de": "Ich habe endlich eine Freundin!",
       "title_en": "I Got a Girlfriend!",
       "downloaded": false,
-      "available_languages": ["German Dub", "English Sub", "German Sub"]
+      "available_languages": ["German Dub", "English Sub", "German Sub"],
+      "folder": null
     }
   ]
 }
 ```
+`folder` is the on-disk series folder name (only set when `downloaded` is true) — pass it as the `folder` param to `GET /api/stream` to resolve a playable URL for that episode.
 
 ---
 

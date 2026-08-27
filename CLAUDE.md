@@ -109,9 +109,13 @@ User settings live in `~/.aniworld/.env` (template at `src/aniworld/.env.example
 
 ### Web UI (`src/aniworld/web/`)
 
-Flask app served by Waitress. Templates and static files are in `web/templates/` and `web/static/`.
+Flask app served by Waitress, exposing a JSON REST API (documented in `API.md`) consumed by one same-origin browser frontend, built and served independently (plus the native Flutter app, which talks to the same API but isn't served by Flask):
 
-**Authentication** (`web/auth.py`): Optional local username/password auth or OIDC/SSO via `authlib`. First launch with `--web-auth` shows a setup page to create the first admin account. `--web-force-sso` disables the password form entirely. Roles: `admin` and `user`.
+- **RedStream TV web app** (`webapp/`, see below) — the site's only browser frontend, served at `/`. A Vite + React + TypeScript SPA styled after the native Flutter app's TV-oriented design (dark theme, poster rails, D-pad-style focus treatment reused as plain `:hover`/`:focus-visible`), used as the browser/web target for what used to be the Flutter app's own web build. Device-approval auth instead of a login form (see below) — there is no username/password form anywhere in the browser.
+
+There used to be a second frontend, a `/react` dashboard with local username/password + OIDC/SSO login, served at this same root; it was removed so this is the only web UI. `ANIWORLD_ENABLE_WEBAPP` is now the sole on/off switch for the web UI (see below) — the old `ANIWORLD_API_ONLY` flag that used to disable just the React dashboard no longer exists, since there's nothing left for it to selectively disable. `web/templates/` and `web/static/` (the pre-React Jinja/vanilla-JS dashboard, removed earlier) and `react/` (removed with this change) — don't recreate either; add SPA components under `webapp/src/` instead.
+
+**Authentication** (`web/auth.py`): Optional local username/password auth or OIDC/SSO via `authlib`, exposed purely as a JSON API (`POST /api/auth/login`, `POST /api/auth/setup`, `GET /api/auth/me`) — with the React dashboard gone, nothing in this repo's own UI actually drives it anymore (the TV web app never shows a password/SSO form; see its device-approval flow below), but the endpoints stay for API consumers/integrations that might. OIDC/SSO still uses server-side redirects (`/oidc/login`, `/oidc/callback`) since that's an IdP round-trip a `fetch()` call can't perform; on failure it redirects to `/?login_error=<message>` — since the TV web app doesn't read that param, this now just lands on its normal device-approval/profile screen with the error silently ignored. `--web-force-sso` disables the password form entirely (still relevant for the JSON API itself). Roles: `admin` and `user`.
 
 **Database** (`web/db.py`): SQLite at `~/.aniworld/`. Manages:
 - Download queue (status, progress, errors)
@@ -129,14 +133,16 @@ Flask app served by Waitress. Templates and static files are in `web/templates/`
 | `-wA` / `--web-auth` | Enable local auth |
 | `-wS` / `--web-sso` | Enable OIDC/SSO login |
 | `-wFS` / `--web-force-sso` | Force SSO-only (implies `--web-auth` + `--web-sso`) |
-| `--web-requests` | List Flutter-web access requests and exit |
+| `--web-requests` | List TV web app access requests and exit |
 | `--web-approve <id>` | Approve a pending web-app access request and exit |
 | `--web-deny <id>` | Deny a pending web-app access request and exit |
 | `--web-revoke <id>` | Revoke a previously approved web-app access request and exit |
 
 The web UI polls `get_ffmpeg_progress()` for live download progress.
 
-**Flutter web build & device approval** (`web/webapp_auth.py`): The Flutter app also builds for web (`flutter build web --base-href /app/`), copied into `web/flutter_web/` at image build time and served same-origin by Flask under `/app/`. Baked into the image unconditionally; `ANIWORLD_ENABLE_WEBAPP` (default `1`) is a runtime on/off switch — set to `0` to fully unregister `/app/` and the `/api/webapp/*` blueprint. It is independent of `--web-auth`/`--web-sso` and never shows a username/password form: a browser without a token calls `POST /api/webapp/request-access`, gets a `device_id`, and polls `GET /api/webapp/request-access/<device_id>` until an admin approves it from the server terminal (`--web-requests` / `--web-approve <id>` / `--web-deny <id>` / `--web-revoke <id>`, backed by the `web_access_requests` table in `web/db.py`). Approval logs the browser in as the (first) admin account and issues a normal bearer token via the existing `api_tokens` mechanism — revoking just deletes that token. Desktop/Android/TV builds are untouched and keep using `LoginScreen`/`SetupScreen`; only `kIsWeb` branches in `main.dart` (`_resolveInitScreen`) route to `WebAccessScreen` instead, and the web build always uses `Uri.base.origin` rather than a user-entered server URL.
+**RedStream TV web app & device approval** (`webapp/`, `web/webapp_auth.py`): a Vite + React + TypeScript SPA built with `npm run build` in `webapp/` (Docker's `webapp-builder` stage), copied into `web/webapp_dist/` at image build time and served same-origin by Flask at the site root (`app.py`'s `index` route — an SPA-fallback catch-all, `api/`-prefixed paths excluded so a removed/mistyped endpoint 404s instead of silently returning the SPA shell). Local dev: `npm run dev` in `webapp/`, proxying `/api`, `/oidc`, `/admin` to a separately-running `aniworld -w` backend (`vite.config.ts`'s `base` is `/`, matching root serving). Baked into the image unconditionally; `ANIWORLD_ENABLE_WEBAPP` (default `1`) is a runtime on/off switch — set to `0` to fully unregister the web UI and the `/api/webapp/*` blueprint, leaving only `/api/*`. It is independent of `--web-auth`/`--web-sso` and never shows a username/password form: a browser without a token calls `POST /api/webapp/request-access`, gets a `device_id`, and polls `GET /api/webapp/request-access/<device_id>` until an admin approves it from the server terminal (`--web-requests` / `--web-approve <id>` / `--web-deny <id>` / `--web-revoke <id>`, backed by the `web_access_requests` table in `web/db.py`). Approval logs the browser in as the (first) admin account and issues a normal bearer token via the existing `api_tokens` mechanism — revoking just deletes that token (`webapp/src/context/AuthContext.tsx`'s `logout()`, wired to Settings' "Zugriff widerrufen"). The native Flutter app (Android/TV, desktop) is untouched and keeps using its own `LoginScreen`/`SetupScreen` — it no longer has a web build target at all (see "Flutter frontend" below); this SPA replaces that role.
+
+Design system for the TV web app is ported literally from the Flutter app's `lib/theme/rs_theme.dart` (colors, radii, typography, layout constants — see `webapp/src/styles/theme.css`); the Flutter app's D-pad focus engine (`AppNavController`, `TvFocusable`) was deliberately **not** ported (it's remote-control-specific), only the visual focus-ring treatment it drove (accent border + glow + scale), reimplemented as plain CSS `:hover`/`:focus-visible`. Screen-for-screen it mirrors the Flutter app: Home (rails), Grid (Serien/Anime/Filme, paginated), Search, Detail (hero/seasons/episodes/language override/watchlist/autosync), Player (custom HLS controls via `hls.js`, skip-intro/outro, auto-advance, resume), Queue, Library, Watchlist, Settings (Speicher/Verbindung only — no Server/Updates sections, those are native-only), and Profile picker.
 
 ### Anime4K (`src/aniworld/anime4k/`)
 
@@ -152,13 +158,11 @@ On Windows, `DependencyManager` in `autodeps.py` auto-downloads FFmpeg (from Btb
 
 ### Flutter frontend (`app/`)
 
-Android TV client built with Flutter (Dart SDK ^3.12.0), displayed under the app name **RedStream**. Primary target is Android TV — the app locks to landscape and is D-pad/remote-navigable via custom focus widgets (`tv_focusable.dart`, `tv_card.dart`).
+Android TV client built with Flutter (Dart SDK ^3.12.0), displayed under the app name **RedStream**. Primary target is Android TV — the app locks to landscape and is D-pad/remote-navigable via custom focus widgets (`tv_focusable.dart`, `tv_card.dart`). Native targets only (Android, TV, desktop) — it no longer builds for web; `app/web/` was removed once the RedStream TV web app (`webapp/`, see "Web UI" above) took over that role with its own React implementation of the same screens/design.
 
 **Architecture**: Riverpod for state management, Dio for HTTP. On first launch shows `SetupScreen` to save the backend server URL into `shared_preferences`. All subsequent API calls go through `ApiService` (wraps Dio, routes image URLs through `/api/proxy-image`).
 
-**Screens**: Home, Search, Grid, Detail (series metadata), Episodes, Player (ExoPlayer/native HLS via `video_player`), Queue, Library, Settings, and `WebAccessScreen` (web build only — see below).
-
-**Web build**: also targets the browser (`app/web/`). Unlike desktop/Android/TV, the web build skips `SetupScreen`/`LoginScreen` entirely — it is always same-origin (`Uri.base.origin`) and gated by the server-terminal approval flow in `WebAccessScreen` instead of a password. See "Flutter web build & device approval" under Web UI below.
+**Screens**: Home, Search, Grid, Detail (series metadata), Episodes, Player (ExoPlayer/native HLS via `video_player`), Queue, Library, Settings.
 
 **Backend integration**: The Flutter app is a thin client that talks exclusively to the Python web UI REST API. It does not talk to aniworld.to directly. Key endpoints it consumes: `/api/search`, `/api/series`, `/api/seasons`, `/api/episodes`, `/api/providers`, `/api/download`, `/api/queue`, `/api/stream`, `/api/library`, `/api/settings`, `/api/proxy-image`.
 

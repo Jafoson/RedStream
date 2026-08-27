@@ -15,13 +15,10 @@ services:
       # volume loses all of them.
       - redstream-data:/home/aniworld/.aniworld
     environment:
-      # ── API-only mode (disables the legacy browser dashboard; the Flutter
-      #    web app at http://<host>:8080/app/ still works, it only needs the
-      #    /api/* routes) ────────────────────────────────────────────────────
-      ANIWORLD_API_ONLY: "1"
-
-      # ── Flutter web app (baked into the image at build time, see Dockerfile) ─
-      # Set to "0" to turn /app/ and its approval API off entirely.
+      # ── RedStream TV web app (baked into the image at build time, see
+      #    Dockerfile) — the only web UI, served at http://<host>:8080/ ────
+      # Set to "0" to turn the web UI and its approval API off entirely,
+      # leaving only the /api/* routes.
       ANIWORLD_ENABLE_WEBAPP: "1"
 
       # ── Authentication ────────────────────────────────────────────────────
@@ -31,8 +28,8 @@ services:
       # !! Change these before exposing the service publicly !!
       ANIWORLD_WEB_ADMIN_USER: "admin"
       ANIWORLD_WEB_ADMIN_PASS: "changeme"
-      # The Flutter web app (/app/) never shows this login form — a browser
-      # that opens it has to be approved from the server terminal instead:
+      # The RedStream TV web app never shows this login form — a
+      # browser that opens it has to be approved from the server terminal instead:
       #   docker compose exec redstream aniworld --web-requests   # list pending
       #   docker compose exec redstream aniworld --web-approve <ID>
       #   docker compose exec redstream aniworld --web-deny <ID>

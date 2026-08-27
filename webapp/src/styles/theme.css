@@ -1,0 +1,54 @@
+/* Ported from the "RedStream TV" Claude Design project's styles.css —
+   values match app/lib/theme/rs_theme.dart's palette exactly (same source),
+   but radii/card sizes/font now follow the TV design instead of the Flutter
+   app's own (denser) proportions. */
+:root {
+  color-scheme: dark;
+
+  --bg: #17120e;
+  --panel: #1f1813;
+  --panel-2: #261d17;
+  --panel-3: #31251d;
+  --line: rgba(255, 238, 214, 0.09);
+  --line-2: rgba(255, 238, 214, 0.18);
+  --text: #f6ede0;
+  --muted: #b7a892;
+  --muted-2: #7d6f5e;
+  --accent: #d9824b;
+  --accent-2: color-mix(in srgb, var(--accent) 80%, #fff);
+  --gold: #e7b34a;
+  --body-text: #d7d8da;
+
+  --radius: 18px;
+  --radius-lg: 26px;
+  --radius-sm: 11px;
+
+  --font: 'Manrope', system-ui, -apple-system, sans-serif;
+
+  /* Tall movie-poster cards, matching the "RedStream TV" Claude Design mock
+     exactly (206x300) at the top of the clamp range. Height is derived from
+     width via aspect-ratio (see PosterCard.css) so it stays correct both in
+     fixed-width rail contexts and in grid contexts where width is
+     column-fractional. clamp()'d so these scale fluidly across the
+     laptop→TV range (≥1024px, see breakpoints.ts) without needing discrete
+     breakpoints there — only the <1024px tablet/mobile tier needs real
+     structural breakpoints, handled per-page (GridPage/SearchPage/
+     WatchlistPage's useGridColumns, MobileNav for the sidebar). */
+  --card-w: clamp(132px, 15vw, 206px);
+  --card-ratio: 206 / 300;
+  --cw-w: clamp(220px, 26vw, 330px);
+  --cw-h: clamp(134px, 16vw, 200px);
+  --sidebar-w: clamp(200px, 14vw, 248px);
+  --sidebar-collapsed: clamp(72px, 5vw, 96px);
+  --gutter-x: clamp(16px, 3.2vw, 44px);
+  --grid-h1-size: clamp(24px, 3.2vw, 42px);
+
+  --glow: 0 0 0 3px var(--accent), 0 22px 55px rgba(0, 0, 0, 0.65);
+}
+
+html,
+body {
+  background: #000;
+  color: var(--text);
+  font-family: var(--font);
+}

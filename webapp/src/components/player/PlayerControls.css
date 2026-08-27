@@ -1,0 +1,526 @@
+.player {
+  /* This is only the controls-chrome overlay (rendered after the real
+     <video> element by PlayerPage) — it must stay transparent so the video
+     underneath shows through. An opaque background here would hide it
+     entirely while audio keeps playing (the .pl-scrim-* gradients already
+     provide readability for the text/controls over the video). */
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  overflow: hidden;
+  font-family: var(--font);
+}
+.pl-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.pl-chrome {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  transition: opacity 0.32s ease;
+  /* .pl-chrome itself must not intercept clicks — it's a full-screen
+     container that stays visible (mounted, opacity 1) whenever the video is
+     paused, so without this, clicking anywhere to resume (handled by
+     .pl-hit underneath, z-index 1) would silently hit this empty div
+     instead. Its actual interactive regions (.pl-top / .pl-bottom) opt back
+     into pointer-events below. */
+  pointer-events: none;
+}
+.pl-chrome.hide {
+  opacity: 0;
+}
+.pl-top,
+.pl-bottom {
+  pointer-events: auto;
+}
+.pl-scrim-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 200px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), transparent);
+  pointer-events: none;
+}
+.pl-scrim-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 380px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.45) 46%, transparent);
+  pointer-events: none;
+}
+
+.pl-top {
+  position: absolute;
+  top: 40px;
+  left: 52px;
+  right: 52px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.pl-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  height: 56px;
+  padding: 0 24px;
+  border-radius: 14px;
+  background: rgba(20, 16, 12, 0.55);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  font-size: 17px;
+  font-weight: 600;
+  color: #fff;
+  transition: transform 0.14s, box-shadow 0.14s, background 0.16s;
+}
+.pl-back svg {
+  width: 20px;
+  height: 20px;
+}
+.pl-back.is-foc {
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: scale(1.04);
+}
+.pl-topright {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.pl-wm {
+  font-weight: 800;
+  font-size: 19px;
+  letter-spacing: -0.02em;
+  color: #fff;
+}
+.pl-wm b {
+  color: var(--accent);
+}
+
+.pl-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 4;
+  pointer-events: none;
+}
+.pl-bigplay {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  background: rgba(20, 16, 12, 0.5);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+}
+.pl-bigplay svg {
+  margin-left: 6px;
+}
+.pl-spinner {
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  border: 4px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--accent);
+  animation: plSpin 0.85s linear infinite;
+}
+@keyframes plSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pl-bottom {
+  position: absolute;
+  left: 52px;
+  right: 52px;
+  bottom: 44px;
+}
+.pl-titleblock {
+  margin-bottom: 22px;
+}
+.pl-title {
+  font-size: 36px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 7px;
+  text-shadow: 0 4px 22px rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+.pl-eptitle {
+  font-size: 18px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.pl-scrub {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin-bottom: 20px;
+}
+.pl-time {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  min-width: 68px;
+}
+.pl-time.rem {
+  text-align: right;
+  color: var(--muted);
+}
+.pl-track-wrap {
+  position: relative;
+  flex: 1;
+  padding: 15px 0;
+  cursor: pointer;
+}
+.pl-track {
+  position: relative;
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.24);
+  transition: height 0.14s;
+}
+.pl-buffered {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+}
+.pl-played {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--accent);
+  border-radius: 4px;
+}
+.pl-thumb {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
+  transition: width 0.14s, height 0.14s, box-shadow 0.14s;
+}
+.pl-track-wrap.is-foc .pl-track {
+  height: 9px;
+}
+.pl-track-wrap.is-foc .pl-thumb {
+  width: 28px;
+  height: 28px;
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 26%, transparent), 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+.pl-bubble {
+  position: absolute;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  color: #111;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 6px 12px;
+  border-radius: 9px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pl-thumb-preview {
+  position: absolute;
+  bottom: 24px;
+  transform: translateX(-50%);
+  border-radius: 11px;
+  border: 2px solid var(--line-2);
+  background-repeat: no-repeat;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.pl-controls {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 74px;
+}
+.pl-cmain {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.pl-cside {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.pl-cvolume {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pl-vol-btn {
+  width: 52px;
+  height: 52px;
+}
+/* The slider track expands into view on hover/focus and collapses back to
+   nothing otherwise — matches the established hover-reveal pattern used
+   elsewhere in this chrome (e.g. .pl-blabel tooltips), rather than always
+   taking up horizontal space next to the transport buttons. */
+.pl-vol-track-wrap {
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: width 0.18s ease, opacity 0.18s ease;
+  cursor: pointer;
+  padding: 12px 0;
+}
+.pl-cvolume.expanded .pl-vol-track-wrap {
+  width: 90px;
+  opacity: 1;
+}
+.pl-vol-track {
+  position: relative;
+  width: 90px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.22);
+}
+.pl-vol-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.pl-vol-thumb {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.pl-btn {
+  position: relative;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  transition: transform 0.14s, box-shadow 0.14s, background 0.16s;
+}
+.pl-btn.play {
+  width: 74px;
+  height: 74px;
+  background: var(--accent);
+  border-color: transparent;
+}
+.pl-btn.play svg {
+  margin-left: 3px;
+}
+.pl-btn.is-foc {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 3px var(--accent), 0 12px 30px rgba(0, 0, 0, 0.5);
+  background: rgba(255, 255, 255, 0.2);
+}
+.pl-btn.play.is-foc {
+  background: var(--accent-2);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 38%, transparent), 0 14px 34px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.pl-blabel {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 16, 12, 0.92);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 11px;
+  border-radius: 8px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.14s;
+  pointer-events: none;
+}
+.pl-btn.is-foc .pl-blabel {
+  opacity: 1;
+}
+
+.pl-hint {
+  margin-top: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(20, 16, 12, 0.62);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 9px 20px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.pl-hint kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--panel-3);
+  border: 1px solid var(--line-2);
+  font-family: var(--font);
+  font-size: 12px;
+  color: #fff;
+}
+.pl-hint .sep {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+}
+
+.pl-skip {
+  position: absolute;
+  right: 52px;
+  bottom: 152px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  height: 60px;
+  padding: 0 28px;
+  border-radius: 14px;
+  background: rgba(20, 16, 12, 0.82);
+  backdrop-filter: blur(10px);
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  transition: transform 0.14s, box-shadow 0.16s, background 0.16s, color 0.16s;
+  animation: plRise 0.3s ease;
+}
+.pl-skip.is-foc {
+  background: #fff;
+  color: #111;
+  box-shadow: 0 0 0 3px var(--accent), 0 14px 34px rgba(0, 0, 0, 0.5);
+  transform: scale(1.04);
+}
+
+.pl-nextcard {
+  position: absolute;
+  right: 52px;
+  bottom: 152px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 340px;
+  padding: 14px 16px 18px;
+  border-radius: 18px;
+  text-align: left;
+  background: rgba(20, 16, 12, 0.92);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--line-2);
+  transition: transform 0.14s, box-shadow 0.16s;
+  animation: plRise 0.3s ease;
+}
+.pl-nextcard.is-foc {
+  box-shadow: 0 0 0 3px var(--accent), 0 18px 44px rgba(0, 0, 0, 0.55);
+  transform: scale(1.02);
+}
+.pl-nc-body {
+  flex: 1;
+  min-width: 0;
+}
+.pl-nc-label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  margin-bottom: 5px;
+}
+.pl-nc-count {
+  font-size: 14px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.pl-nc-play {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 48px;
+  color: #fff;
+}
+.pl-nc-play svg {
+  margin-left: 2px;
+}
+.pl-nc-bar {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 7px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+.pl-nc-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.9s linear;
+}
+
+@keyframes plRise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

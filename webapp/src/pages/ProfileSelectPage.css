@@ -1,0 +1,72 @@
+.profile-select {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  background: var(--bg);
+}
+
+.profile-select__grid {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 700px;
+}
+
+.profile-avatar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+}
+
+.profile-avatar__circle {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 800;
+  color: #fff;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.profile-avatar.is-foc .profile-avatar__circle {
+  transform: scale(1.08);
+  box-shadow: var(--glow);
+}
+
+.profile-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.profile-edit__swatches {
+  display: flex;
+  gap: 10px;
+}
+
+.profile-edit__swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+}
+
+.profile-edit__swatch--active {
+  border-color: var(--text);
+}
+
+.profile-edit__actions {
+  display: flex;
+  justify-content: space-between;
+}

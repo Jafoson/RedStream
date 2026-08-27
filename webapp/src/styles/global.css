@@ -1,0 +1,332 @@
+* {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+input {
+  font-family: inherit;
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+.text-input {
+  height: 54px;
+  border-radius: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  padding: 0 18px;
+  color: var(--text);
+  font-size: 16px;
+  width: 100%;
+}
+.text-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
+  border-color: transparent;
+}
+
+/* ---- generic surface for screens the design didn't cover (Queue/Library/
+   Settings) — kept consistent with the design's panel/line tokens ---- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+/* ---- buttons (ported from styles.css .btn*) ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 30px;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  font-size: 17px;
+  transition: transform 0.14s ease, box-shadow 0.14s, background 0.16s;
+  white-space: nowrap;
+}
+.btn svg {
+  width: 20px;
+  height: 20px;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary.is-foc {
+  transform: scale(1.05);
+  box-shadow: 0 12px 34px color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-2);
+}
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  backdrop-filter: blur(6px);
+}
+.btn-ghost.on {
+  background: color-mix(in srgb, var(--accent) 30%, rgba(255, 255, 255, 0.12));
+}
+.btn-ghost.is-foc {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 2px #fff;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ---- filter/genre chip (ported from styles.css .filter) ---- */
+.filter {
+  padding: 10px 20px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--muted);
+  transition: transform 0.14s, box-shadow 0.14s, background 0.16s, color 0.16s;
+}
+.filter.on {
+  background: #fff;
+  color: #111;
+  border-color: #fff;
+}
+.filter.is-foc {
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: translateY(-2px);
+  color: #fff;
+}
+.filter.is-foc.on {
+  color: #111;
+  box-shadow: 0 0 0 3px var(--accent);
+}
+
+.genre-tag {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+.chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted-2);
+  display: inline-block;
+}
+
+/* ---- back button (ported from styles.css .back-btn) ---- */
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 46px;
+  padding: 0 18px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 15px;
+  color: #fff;
+  transition: box-shadow 0.14s, transform 0.14s;
+}
+.back-btn.is-foc {
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: scale(1.04);
+}
+.back-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ---- grid/section headers (ported from styles.css .grid-head/.section-head) ---- */
+.grid-head {
+  padding: 30px var(--gutter-x) 6px;
+}
+.grid-eyebrow {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+.grid-h1 {
+  font-size: var(--grid-h1-size);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin: 0 0 6px;
+}
+.grid-sub {
+  color: var(--muted);
+  font-size: 16px;
+}
+.filters {
+  display: flex;
+  gap: 11px;
+  padding: 22px var(--gutter-x) 6px;
+  flex-wrap: wrap;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--gutter-x);
+  margin-bottom: 18px;
+}
+.section-title {
+  font-size: 25px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+.section-title .bar {
+  width: 5px;
+  height: 24px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* ---- misc small text scales still used by pages without a bespoke design ---- */
+.text-title-lg {
+  font-size: 25px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.text-title-md {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text);
+}
+.text-body-lg {
+  font-size: 17px;
+  color: var(--body-text);
+  line-height: 1.5;
+}
+.text-body-md {
+  font-size: 14.5px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.text-label-sm {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--muted-2);
+  text-transform: uppercase;
+}
+
+/* ---- toast (ported from styles.css .toast) ---- */
+.toast {
+  position: fixed;
+  bottom: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 16px;
+  padding: 14px 26px;
+  border-radius: 13px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+  animation: toastIn 0.25s ease;
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* ---- content scroller (each Shell tab page renders one of these as its
+   root) ---- */
+.scroller {
+  height: 100%;
+  overflow: hidden;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  padding: 0 0 60px;
+}
+.scroller::-webkit-scrollbar {
+  display: none;
+}
+/* Reserved once here (every tab page renders a .scroller as its root) so
+   MobileNav's fixed bottom bar never covers a page's last content row —
+   handling it centrally instead of per-page. */
+@media (max-width: 1023px) {
+  .scroller {
+    padding-bottom: calc(60px + var(--mobile-nav-h, 64px));
+  }
+}
+
+/* A coarse pointer (touch) has no cursor concept to justify a lingering
+   scale/glow highlight after a tap — FocusEngine's mouse-hover hardening
+   already keeps real touch taps from setting is-foc via hover, but a tapped
+   card's onClick can still leave it as the last logical D-pad focus cell;
+   suppressing the visual here (not the underlying focus state, which still
+   drives Enter-key semantics for anyone who *does* attach a keyboard) avoids
+   that reading as a stuck-state bug. */
+@media (pointer: coarse) {
+  .poster.is-foc,
+  .cw.is-foc {
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+.app-loading {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 3px solid var(--panel-3);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

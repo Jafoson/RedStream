@@ -1,0 +1,35 @@
+.home-greet {
+  padding: 40px var(--gutter-x) 2px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+.home-greet h1 {
+  font-size: var(--grid-h1-size);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+.home-greet p {
+  color: var(--muted);
+  font-size: 18px;
+  margin: 0;
+  font-weight: 500;
+}
+.home-greet .clock {
+  text-align: right;
+  color: var(--muted-2);
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.5;
+  flex: 0 0 auto;
+}
+.home-greet .clock b {
+  display: block;
+  color: var(--text);
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}

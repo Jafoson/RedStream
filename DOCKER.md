@@ -229,19 +229,19 @@ ANIWORLD_WEB_FORCE_SSO: "1"
 
 ## Web App Setup
 
-RedStream also ships as a web build, served by the backend itself at `/app/` —
-no separate container or backend URL to configure. It is baked into the image
-at build time (see "Building the image yourself" below); until a new image
-including it is published to `ghcr.io/jafoson/aniworld-downloader`, you need
-to build it yourself once.
+RedStream also ships as a web build, served by the backend itself at the
+site root — no separate container or backend URL to configure. It is baked
+into the image at build time (see "Building the image yourself" below);
+until a new image including it is published to `ghcr.io/jafoson/aniworld-downloader`,
+you need to build it yourself once.
 
 ```
-http://<your-server-ip>:8080/app/
+http://<your-server-ip>:8080/
 ```
 
 Turn it off with `ANIWORLD_ENABLE_WEBAPP: "0"` in `docker-compose.yaml` if you
-don't want `/app/` or its approval API reachable at all — no rebuild needed,
-it's a runtime setting.
+don't want the web UI or its approval API reachable at all — no rebuild
+needed, it's a runtime setting.
 
 The web build has **no username/password form**. A browser that opens it is
 put in a pending state and has to be approved from the server terminal:
@@ -260,14 +260,14 @@ browser (a long-lived token, same mechanism as `/api/auth/login`) until you
 run `--web-revoke`.
 
 This is independent of `ANIWORLD_WEB_AUTH`/`ANIWORLD_WEB_SSO`: the web build
-always requires terminal approval, even if the legacy dashboard's own login
-is disabled. The Android TV / desktop app above is unaffected and keeps using
-the normal login form.
+always requires terminal approval, even with local login enabled. The
+Android TV / desktop app above is unaffected and keeps using the normal
+login form.
 
 ### Building the image yourself
 
 Plain `docker build` works from a checkout of this repo, no `docker-compose.yaml`
-needed — the Flutter web build is included automatically as part of the image:
+needed — the RedStream TV web app (`webapp/`) is included automatically as part of the image:
 
 ```bash
 git clone https://github.com/phoenixthrush/AniWorld-Downloader.git redstream
@@ -281,7 +281,7 @@ Then either run it directly:
 docker run -d --name redstream -p 8080:8080 \
   -v ./downloads:/app/Downloads \
   -v redstream-data:/home/aniworld/.aniworld \
-  -e ANIWORLD_API_ONLY=1 -e ANIWORLD_WEB_AUTH=1 \
+  -e ANIWORLD_WEB_AUTH=1 \
   -e ANIWORLD_WEB_ADMIN_USER=admin -e ANIWORLD_WEB_ADMIN_PASS=changeme \
   redstream:local
 ```
@@ -289,11 +289,10 @@ docker run -d --name redstream -p 8080:8080 \
 or point `docker-compose.yaml` at it (`image: redstream:local`, or `build: .`
 to have Compose build it for you — see "Updating" below) and `docker compose up -d`
 as usual. Either way, `ANIWORLD_ENABLE_WEBAPP` (default `1`) is what decides at
-*runtime* whether `/app/` is actually served — the build always includes it.
+*runtime* whether the web UI is actually served — the build always includes it.
 
-The first build pulls `ghcr.io/cirruslabs/flutter:stable` (a few GB) to compile
-the web frontend, so it's slower than before; subsequent builds reuse Docker's
-layer cache and are fast again unless `app/` changed.
+Subsequent builds reuse Docker's layer cache and are fast again unless `webapp/`
+changed.
 
 ---
 

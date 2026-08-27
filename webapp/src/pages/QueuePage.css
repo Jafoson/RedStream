@@ -1,0 +1,73 @@
+.queue-page__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 var(--gutter-x) 20px;
+}
+
+.queue-item {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: box-shadow 0.14s, transform 0.14s;
+}
+.queue-item.is-foc {
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: scale(1.01);
+}
+
+.queue-item__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.queue-item__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.queue-item__actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.queue-item__bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+
+.queue-item__bar-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.ffmpeg-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ffmpeg-banner__bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+
+.ffmpeg-banner__fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.ffmpeg-banner__stats {
+  display: flex;
+  gap: 14px;
+}

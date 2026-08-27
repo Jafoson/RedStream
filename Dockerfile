@@ -1,23 +1,22 @@
 # ==========================================
-# Stage 0: Build the Flutter web frontend
+# Stage 0: Build the RedStream TV web app
 # ==========================================
-# Served same-origin by the Python backend under /app/ (see webapp_auth.py) —
-# this is what makes the "no manual server URL, no normal login" web build work.
+# The site's only web frontend — served same-origin by the Python backend at
+# the root (see app.py's `index` route, webapp_auth.py for the device-approval
+# API it talks to) — this is what makes the "no manual server URL, no normal
+# login" web build work. Same role the Flutter web build used to fill; this
+# React app replaced it so the Flutter project (app/) only needs to target
+# native Android/TV builds. The separate /react dashboard that used to be
+# served at this same root was removed — this is the one and only web UI now.
 #
 # --platform=$BUILDPLATFORM: the output is architecture-independent JS/HTML,
 # so on a multi-platform build (linux/amd64,linux/arm64) this runs natively
-# on the build host once instead of once per target arch (avoiding a slow,
-# occasionally flaky QEMU-emulated Flutter build for the second platform).
-FROM --platform=$BUILDPLATFORM ghcr.io/cirruslabs/flutter:stable AS flutter-builder
+# on the build host once instead of once per target arch.
+FROM --platform=$BUILDPLATFORM node:22-slim AS webapp-builder
 
 WORKDIR /app
-COPY app/ /app/
-# See web/patch_legacy_browsers.sh: works around old embedded-browser Smart
-# TV apps (e.g. pre-2020 Chromium engines) white-screening because Flutter's
-# web loader and CanvasKit's glue JS unconditionally use ES2020+ syntax.
-RUN flutter pub get && \
-    flutter build web --release --base-href /app/ && \
-    bash web/patch_legacy_browsers.sh
+COPY webapp/ /app/
+RUN npm ci && npm run build
 
 # ==========================================
 # Stage 1: Build virtual env and dependencies
@@ -153,8 +152,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /ms-playwright /ms-playwright
 
-# Flutter web build, served by the backend itself at /app/ (webapp_auth.py).
-COPY --from=flutter-builder /app/build/web /opt/venv/lib/python3.13/site-packages/aniworld/web/flutter_web
+# RedStream TV web app, served by the backend itself at / (app.py's `index`
+# route, webapp_auth.py for its device-approval API).
+COPY --from=webapp-builder /app/dist /opt/venv/lib/python3.13/site-packages/aniworld/web/webapp_dist
 
 # Environments
 ENV PATH="/opt/venv/bin:$PATH" \

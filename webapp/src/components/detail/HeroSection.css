@@ -1,0 +1,65 @@
+.detail-hero {
+  position: relative;
+  height: 600px;
+}
+.detail-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  background-color: var(--panel-2);
+}
+.detail-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(23, 18, 14, 0.96) 0%, rgba(23, 18, 14, 0.72) 40%, rgba(23, 18, 14, 0.2) 75%),
+    linear-gradient(0deg, var(--bg) 2%, transparent 42%);
+}
+.detail-inner {
+  position: absolute;
+  left: 64px;
+  bottom: 40px;
+  max-width: 720px;
+  z-index: 2;
+}
+.detail-title {
+  font-size: 74px;
+  line-height: 0.95;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin: 0 0 18px;
+  color: var(--text);
+}
+.detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 16px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.detail-desc {
+  font-size: 18px;
+  line-height: 1.55;
+  color: var(--body-text, #d7d8da);
+  margin-bottom: 26px;
+  max-width: 640px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.detail-actions {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.back-btn {
+  position: absolute;
+  top: 30px;
+  left: 44px;
+  z-index: 10;
+}

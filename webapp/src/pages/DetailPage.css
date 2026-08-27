@@ -1,0 +1,131 @@
+.season-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 26px 64px 4px;
+  flex-wrap: wrap;
+}
+.season-pill {
+  padding: 9px 18px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--muted);
+  transition: box-shadow 0.14s, transform 0.14s, color 0.16s, background 0.16s;
+}
+.season-pill.on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: #fff;
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.season-pill.is-foc {
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: translateY(-2px);
+  color: #fff;
+}
+.season-current-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+.eplist {
+  padding: 18px 64px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.eprow {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  transition: box-shadow 0.14s, transform 0.14s, background 0.16s;
+  cursor: pointer;
+}
+.eprow.is-foc {
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: scale(1.01);
+  background: var(--panel-3);
+}
+.eprow--next {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-2));
+}
+.ep-next-badge {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.ep-thumb {
+  width: 200px;
+  height: 114px;
+  flex: 0 0 200px;
+  border-radius: 11px;
+  position: relative;
+  overflow: hidden;
+}
+.ep-num {
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 3px 9px;
+  border-radius: 6px;
+  color: #fff;
+}
+.ep-body {
+  flex: 1;
+  min-width: 0;
+}
+.ep-title {
+  font-size: 19px;
+  font-weight: 800;
+  margin-bottom: 7px;
+  color: var(--text);
+}
+.ep-desc {
+  font-size: 14.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.ep-play {
+  width: 50px;
+  height: 50px;
+  flex: 0 0 50px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+.eprow.is-foc .ep-play {
+  background: var(--accent);
+}
+
+.language-dialog__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}

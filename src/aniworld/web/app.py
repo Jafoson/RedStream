@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -5,10 +6,11 @@ import threading
 import time
 
 import requests
-from flask import Flask, g, jsonify, redirect, render_template, request, url_for
+from flask import Flask, abort, g, jsonify, request, url_for
 from flask_wtf.csrf import CSRFProtect
 
 from ..config import (
+    ANIWORLD_CONFIG_DIR,
     LANG_KEY_MAP,
     LANG_LABELS,
     SUPPORTED_PROVIDERS,
@@ -533,13 +535,14 @@ def _proxy_image_url(url: str) -> str:
     return f"/api/proxy-image?url={quote(url, safe='')}"
 
 
-def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=False):
+def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
     app = Flask(__name__)
     app_version = _get_version()
 
-    # The Flutter web build ships baked into every image (see Dockerfile), but
-    # serving it — and its device-approval API — is opt-out at runtime via env.
+    # The RedStream TV web app ships baked into every image (see Dockerfile),
+    # but serving it — and its device-approval API — is opt-out at runtime
+    # via env.
     webapp_enabled = os.environ.get("ANIWORLD_ENABLE_WEBAPP", "1") == "1"
     if webapp_enabled:
         from .webapp_auth import webapp_bp
@@ -574,7 +577,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             login_required,
             refresh_session_role,
         )
-        from .db import has_any_admin, init_db
+        from .db import init_db
 
         app.secret_key = get_or_create_secret_key()
         app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -599,18 +602,6 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             app.config["OIDC_ADMIN_USER"] = None
             app.config["OIDC_ADMIN_SUBJECT"] = None
             app.config["FORCE_SSO"] = False
-
-        @app.before_request
-        def _check_setup():
-            if request.endpoint and request.endpoint.startswith("auth."):
-                return None
-            if request.endpoint == "static":
-                return None
-            if request.path.startswith("/api/"):
-                return None  # API routes handle their own auth via login_required
-            if not app.config.get("FORCE_SSO", False) and not has_any_admin():
-                return redirect(url_for("auth.setup"))
-            return None
 
         @app.before_request
         def _refresh_role():
@@ -702,46 +693,53 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
     @app.route("/api/auth/check")
     def api_auth_check():
         if not auth_enabled:
-            return jsonify({"auth_enabled": False, "setup_needed": False})
+            return jsonify({
+                "auth_enabled": False,
+                "setup_needed": False,
+                "oidc_enabled": False,
+                "oidc_display_name": "SSO",
+                "force_sso": False,
+            })
         from .db import has_any_admin as _has_any_admin
         return jsonify({
             "auth_enabled": True,
             "setup_needed": not _has_any_admin(),
+            # Same values the Jinja context processor injects as globals
+            # (_inject_auth) — the SPA needs them over JSON instead to decide
+            # whether to show an SSO button / hide the password form.
+            "oidc_enabled": app.config.get("OIDC_ENABLED", False),
+            "oidc_display_name": app.config.get("OIDC_DISPLAY_NAME", "SSO"),
+            "force_sso": app.config.get("FORCE_SSO", False),
         })
 
-    # ── Flutter web build ───────────────────────────────────────────────────
-    # Served same-origin under /app/ so the Flutter client never needs a
-    # separately-configured backend URL. Only mounted if the build output
-    # (flutter build web --base-href /app/) has been placed alongside this
-    # module; absent that, the route simply doesn't exist.
+    # ── RedStream TV web app ────────────────────────────────────────────────
+    # The site's only web frontend (the /react dashboard was removed — see
+    # CLAUDE.md). Served same-origin at the root with an SPA-fallback: any
+    # path that isn't a real static asset gets index.html, so client-side
+    # routes (/detail, /watch, …) work on a hard refresh too — except paths
+    # starting with api/, which fall through to a real 404 instead of
+    # silently returning the SPA shell for a mistyped/removed endpoint.
+    # Endpoint name stays "index" (not e.g. webapp_spa) since auth.py's
+    # login_required/admin_required decorators refer to it by that name to
+    # bounce unauthenticated non-API requests back to the SPA. Only mounted
+    # if the build output (`npm run build` in webapp/, see Dockerfile's
+    # webapp-builder stage) has been placed alongside this module; absent
+    # that, the route simply doesn't exist.
     from pathlib import Path as _Path
 
-    _flutter_web_dir = _Path(__file__).resolve().parent / "flutter_web"
-    if webapp_enabled and _flutter_web_dir.is_dir():
+    _webapp_dist_dir = _Path(__file__).resolve().parent / "webapp_dist"
+    if webapp_enabled and _webapp_dist_dir.is_dir():
         from flask import send_from_directory
 
-        @app.route("/app/")
-        @app.route("/app/<path:asset_path>")
-        def flutter_web_app(asset_path="index.html"):
-            target = _flutter_web_dir / asset_path
-            if not target.is_file():
-                asset_path = "index.html"
-            return send_from_directory(str(_flutter_web_dir), asset_path)
-
-    if not api_only:
         @app.route("/")
-        def index():
-            sto_lang_labels = {"1": "German Dub", "2": "English Dub"}
-            default_web_language = os.environ.get("ANIWORLD_LANGUAGE", "German Dub")
-            if default_web_language not in LANG_LABELS.values():
-                default_web_language = "German Dub"
-            return render_template(
-                "index.html",
-                lang_labels=LANG_LABELS,
-                sto_lang_labels=sto_lang_labels,
-                supported_providers=WORKING_PROVIDERS,
-                default_web_language=default_web_language,
-            )
+        @app.route("/<path:asset_path>")
+        def index(asset_path=None):
+            if asset_path and asset_path.startswith("api/"):
+                abort(404)
+            target = _webapp_dist_dir / asset_path if asset_path else None
+            if not asset_path or not target.is_file():
+                asset_path = "index.html"
+            return send_from_directory(str(_webapp_dist_dir), asset_path)
 
     @app.route("/api/search", methods=["POST"])
     def api_search():
@@ -914,9 +912,11 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
                     cp_path = Path.home() / cp_path
                 scan_roots.append(cp_path)
 
-            # Build map of (season_num, episode_num) -> preview_url found on disk
+            # Build map of (season_num, episode_num) -> {folder, preview_url} found on disk.
+            # folder is what the SPA's player passes back to GET /api/stream to
+            # resolve a playable URL for a downloaded episode.
             from .thumbnails import preview_path as _preview_path
-            downloaded_info: dict[tuple[int, int], str | None] = {}
+            downloaded_info: dict[tuple[int, int], dict] = {}
             try:
                 title_clean = ""
                 if series:
@@ -952,15 +952,15 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
                                 key = (int(m.group(1)), int(m.group(2)))
                                 if key in downloaded_info:
                                     continue
+                                entry = {"folder": folder.name, "preview_url": None}
                                 prev = _preview_path(f)
                                 if prev.exists():
                                     try:
                                         rel = prev.relative_to(root)
-                                        downloaded_info[key] = f"/api/episode-preview/{rel.as_posix()}"
+                                        entry["preview_url"] = f"/api/episode-preview/{rel.as_posix()}"
                                     except ValueError:
-                                        downloaded_info[key] = None
-                                else:
-                                    downloaded_info[key] = None
+                                        pass
+                                downloaded_info[key] = entry
             except Exception:
                 pass
 
@@ -977,7 +977,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             for ep in season.episodes:
                 key = (ep.season.season_number, ep.episode_number)
                 downloaded = key in downloaded_eps
-                preview_url = downloaded_info.get(key)
+                disk_entry = downloaded_info.get(key) or {}
                 available_languages = _episode_language_labels(ep.provider_data)
                 prog = progress_map.get(ep.url, {})
 
@@ -995,7 +995,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
                         "watch_position": prog.get("position_seconds", 0),
                         "watch_duration": prog.get("duration_seconds", 0),
                         "is_watched": bool(prog.get("completed", 0)),
-                        "preview_url": preview_url,
+                        "preview_url": disk_entry.get("preview_url"),
+                        "folder": disk_entry.get("folder"),
                     }
                 )
             return jsonify({"episodes": episodes_data})
@@ -1222,22 +1223,6 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
 
     # ─────────────────────────────────────────────────────────────────────────
 
-    if not api_only:
-        @app.route("/library")
-        def library_page():
-            return render_template("library.html")
-
-        @app.route("/settings")
-        def settings_page():
-            from pathlib import Path
-            import platform
-
-            env_path = Path.home() / ".aniworld" / ".env"
-            if platform.system() != "Windows":
-                display = "~/.aniworld/.env"
-            else:
-                display = str(env_path)
-            return render_template("settings.html", env_path=display)
 
     @app.route("/api/random")
     def api_random():
@@ -1249,6 +1234,8 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             return jsonify({"url": url})
         return jsonify({"error": "Failed to fetch random anime"}), 500
 
+    _image_cache_dir = ANIWORLD_CONFIG_DIR / "image_cache"
+
     @app.route("/api/proxy-image")
     def api_proxy_image():
         from flask import Response
@@ -1256,12 +1243,45 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         target = request.args.get("url", "").strip()
         if not target or not target.startswith(("http://", "https://")):
             return "", 400
+
+        # Every poster on Home/Grid/Search/Detail routes through this proxy,
+        # and without a server-side cache each of the dozens of images on a
+        # single page load re-fetches the same remote artwork from
+        # aniworld.to/TMDB/etc. from scratch, every time — the browser's own
+        # `Cache-Control` below only helps a *repeat* visit in the *same*
+        # browser, not the common case of dozens of concurrent first-time
+        # requests during one page load competing for the ~6 connections a
+        # browser allows per origin, which is what actually made Home feel
+        # slow to first paint. Caching to disk (keyed by a hash of the source
+        # URL, content-type stored alongside) means only the very first
+        # request for a given poster anywhere ever pays the remote round-trip;
+        # every later one — same browser, different browser, after a
+        # restart — is served straight off disk.
+        cache_key = hashlib.sha256(target.encode("utf-8")).hexdigest()
+        data_path = _image_cache_dir / f"{cache_key}.bin"
+        ct_path = _image_cache_dir / f"{cache_key}.ct"
+        if data_path.exists() and ct_path.exists():
+            try:
+                return Response(
+                    data_path.read_bytes(),
+                    content_type=ct_path.read_text().strip(),
+                    headers={"Cache-Control": "public, max-age=3600"},
+                )
+            except OSError:
+                pass  # fall through to a fresh fetch if the cache read itself fails
+
         try:
-            resp = requests.get(target, timeout=10, stream=True)
+            resp = requests.get(target, timeout=10)
             resp.raise_for_status()
             content_type = resp.headers.get("Content-Type", "image/jpeg")
+            try:
+                _image_cache_dir.mkdir(parents=True, exist_ok=True)
+                data_path.write_bytes(resp.content)
+                ct_path.write_text(content_type)
+            except OSError as e:
+                logger.warning(f"Image cache write failed for {target}: {e}")
             return Response(
-                resp.iter_content(chunk_size=8192),
+                resp.content,
                 content_type=content_type,
                 headers={"Cache-Control": "public, max-age=3600"},
             )
@@ -1669,13 +1689,6 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
     def api_custom_paths_delete(path_id):
         remove_custom_path(path_id)
         return jsonify({"ok": True})
-
-    # ===== Auto-Sync Page =====
-
-    if not api_only:
-        @app.route("/autosync")
-        def autosync_page():
-            return render_template("autosync.html")
 
     # ===== Auto-Sync API =====
 
@@ -2355,6 +2368,12 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
                     stream_file = unquote(path[path.index(prefix) + len(prefix):])
             from flask import g as _g
             completed = bool(data.get("completed", False))
+            # Optional explicit override for the `started` inference — see
+            # upsert_watch_progress's docstring-comment. Absent/None means
+            # "infer from position_seconds" (the normal case for real
+            # playback saves).
+            started_raw = data.get("started")
+            started = bool(started_raw) if started_raw is not None else None
             upsert_watch_progress(
                 episode_url=episode_url,
                 series_title=data.get("series_title"),
@@ -2367,6 +2386,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
                 completed=completed,
                 stream_file=stream_file,
                 profile_id=getattr(_g, "profile_id", 1),
+                started=started,
             )
             if completed and stream_file:
                 try:
@@ -2598,12 +2618,34 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
 
     # ─────────────────────────────────────────────────────────────────────────
 
+    # Registered unconditionally (not gated behind `if auth_enabled:` below):
+    # the RedStream TV web app's device-approval flow issues its own bearer
+    # tokens via the existing api_tokens mechanism independent of whether
+    # local username/password auth (`-wA`/`--web-auth`) is on, but its client
+    # (AuthContext.tsx) still needs somewhere to validate that token and fetch
+    # the logged-in user on every bootstrap — previously this route only
+    # existed when auth_enabled was True, so a device-approval token was
+    # accepted by the poll endpoint but then hit a 404 validating it here,
+    # leaving the web app stuck on its "Zugriff angefragt" screen forever
+    # even after an admin approved the request.
+    @app.route("/api/auth/me")
+    def api_auth_me():
+        from .auth import get_current_user
+
+        user = get_current_user()
+        if not user:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                user = validate_api_token(auth_header[7:].strip())
+        if not user:
+            return jsonify({"error": "Not authenticated"}), 401
+        return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]})
+
     if auth_enabled:
         from .auth import admin_required
 
         # Endpoints that require admin instead of just login
         _admin_only = {
-            "settings_page",
             "api_settings",
             "api_settings_public_ip",
             "api_settings_update",
@@ -2620,18 +2662,16 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
         # (admin_required for settings endpoints)
         _exempt = {
             "static",
-            "auth.login",
-            "auth.logout",
-            "auth.setup",
             "auth.oidc_login",
             "auth.oidc_callback",
-            "api_auth_check",        # public: lets Flutter detect auth status
+            "api_auth_check",        # public: lets clients detect auth status before login
             "api_proxy_image",       # public: poster images are not sensitive
             "api_episode_preview",   # public: episode thumbnail images, not sensitive
             "api_thumbnails_sprite", # public: seek-bar sprite thumbnails, not sensitive
             "webapp.request_access",        # public: web build's device-approval gate
             "webapp.request_access_status", # public: polled before a token exists
-            "flutter_web_app",              # public: the SPA shell itself, not the data
+            "index",                        # public: the TV web app's SPA shell itself, not the data
+            "api_auth_me",                  # registered unconditionally above; handles its own auth
         }
         for endpoint, view_func in list(app.view_functions.items()):
             if endpoint not in _exempt:
@@ -2694,17 +2734,6 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False, api_only=
             _sess.clear()
             return jsonify({"ok": True})
 
-        @app.route("/api/auth/me")
-        def api_auth_me():
-            user = get_current_user()
-            if not user:
-                auth_header = request.headers.get("Authorization", "")
-                if auth_header.startswith("Bearer "):
-                    user = validate_api_token(auth_header[7:].strip())
-            if not user:
-                return jsonify({"error": "Not authenticated"}), 401
-            return jsonify({"id": user["id"], "username": user["username"], "role": user["role"]})
-
         csrf.exempt(api_auth_setup)
         csrf.exempt(api_auth_login)
         csrf.exempt(api_auth_logout)
@@ -2731,11 +2760,8 @@ def start_web_ui(
     auth_enabled = (
         auth_enabled or force_sso or os.getenv("ANIWORLD_WEB_AUTH", "0") == "1"
     )
-    api_only = os.getenv("ANIWORLD_API_ONLY", "0") == "1"
-
     app = create_app(
         auth_enabled=auth_enabled, sso_enabled=sso_enabled, force_sso=force_sso,
-        api_only=api_only,
     )
     display_host = "localhost" if host == "127.0.0.1" else host
     url = f"http://{display_host}:{port}"
@@ -2755,4 +2781,12 @@ def start_web_ui(
     else:
         from waitress import serve
 
-        serve(app, host=host, port=port)
+        # Waitress defaults to a 4-thread pool, which starves fast under this
+        # app's actual load pattern: a single Home page load fires dozens of
+        # concurrent /api/proxy-image requests plus ~8 data API calls, and
+        # HLS segment streaming (/api/stream/files/*) can hold a thread for
+        # the duration of each file transfer — with only 4 threads, all of
+        # that serializes behind whatever's already in flight, which is a
+        # real, user-visible source of the web UI feeling much slower than
+        # the native app (which has no such shared bottleneck per client).
+        serve(app, host=host, port=port, threads=16)

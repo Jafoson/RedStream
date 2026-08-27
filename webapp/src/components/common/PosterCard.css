@@ -1,0 +1,116 @@
+.poster {
+  position: relative;
+  width: var(--card-w);
+  aspect-ratio: var(--card-ratio);
+  flex: 0 0 var(--card-w);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #1a1a1d;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  padding: 0;
+  text-align: left;
+  display: block;
+}
+.poster.is-foc {
+  transform: scale(1.07);
+  box-shadow: var(--glow);
+  z-index: 8;
+}
+.poster-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.poster-grain {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 80% at 80% 0%, rgba(255, 255, 255, 0.18), transparent 55%);
+  mix-blend-mode: screen;
+}
+.poster-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.82) 4%, rgba(0, 0, 0, 0.15) 46%, transparent 70%);
+}
+.poster-wm {
+  position: absolute;
+  top: -26px;
+  right: -6px;
+  font-size: 150px;
+  font-weight: 800;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.09);
+  letter-spacing: -0.05em;
+}
+.poster-top {
+  position: absolute;
+  top: 13px;
+  left: 13px;
+  right: 13px;
+  display: flex;
+  align-items: flex-start;
+}
+.poster-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.poster-info {
+  position: absolute;
+  left: 15px;
+  right: 15px;
+  bottom: 14px;
+}
+.poster-name {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin-bottom: 7px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.poster-sub {
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.72);
+  font-weight: 600;
+}
+.poster-kind {
+  position: absolute;
+  top: 13px;
+  left: 13px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  padding: 4px 9px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+.poster-kind.anime {
+  background: rgba(217, 31, 39, 0.85);
+}
+
+.cw-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+}
+.cw-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}

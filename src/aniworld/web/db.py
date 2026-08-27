@@ -1444,10 +1444,23 @@ def upsert_watch_progress(
     completed=False,
     stream_file=None,
     profile_id=1,
+    started=None,
 ):
     conn = get_db()
     try:
-        started_val = 1 if float(position_seconds) > 30 else 0
+        # `started` normally infers itself from position (>30s of real
+        # playback) — but a caller can pass it explicitly (True/False) to
+        # override that inference. This exists for the web app's "advance the
+        # continue-watching frontier to the next episode the moment this one
+        # completes" write: that row is deliberately created at position 0 (no
+        # real playback happened yet), and get_continue_watching's frontier
+        # query below filters on `started = 1` — without this override, a
+        # position-0 "next episode" row would silently never become the
+        # reported frontier, leaving the old (real, started=1) finished
+        # episode as the frontier until the user actually watches >30s of the
+        # next one for real, which is exactly the "still shows the old
+        # episode" bug this parameter exists to fix.
+        started_val = (1 if started else 0) if started is not None else (1 if float(position_seconds) > 30 else 0)
         conn.execute(
             """
             INSERT INTO watch_progress

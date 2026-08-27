@@ -1,0 +1,61 @@
+.grid {
+  display: grid;
+  /* --grid-cols is set on .grid-page's root by GridPage.tsx (useGridColumns),
+     inherited down through the cascade — JS and CSS read the exact same
+     number, so there's no second column-count to keep in sync by hand. */
+  grid-template-columns: repeat(var(--grid-cols, 6), 1fr);
+  gap: 22px 20px;
+  padding: 10px var(--gutter-x);
+}
+.grid .poster {
+  width: 100%;
+  flex: none;
+}
+.grid-letter {
+  padding: 28px var(--gutter-x) 4px;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+/* Narrower tiers get a tighter gap — large gaps between already-small cards
+   waste space that matters more on a small screen than a wide one. */
+@media (max-width: 1023px) {
+  .grid {
+    gap: 16px 12px;
+  }
+}
+@media (max-width: 639px) {
+  .grid {
+    gap: 10px 8px;
+  }
+  .grid-letter {
+    font-size: 22px;
+    padding: 18px var(--gutter-x) 2px;
+  }
+}
+
+/* Netflix-TV-app-style treatment: fewer, larger tiles with bolder type and a
+   stronger focus glow for 10-foot viewing. Rescoped on .grid-page rather than
+   redeclared on :root so it only affects this page's own PosterCards —
+   WatchlistPage reuses these same .grid/.grid-head class names and must NOT
+   pick up TV sizing meant for the catalog grid. */
+html[data-tv='true'] .grid-page {
+  --card-w: clamp(220px, 16vw, 280px);
+  --gutter-x: clamp(48px, 5vw, 80px);
+  --grid-h1-size: clamp(42px, 4.5vw, 58px);
+}
+html[data-tv='true'] .grid-page .grid {
+  gap: 34px 28px;
+}
+html[data-tv='true'] .grid-page .poster.is-foc {
+  transform: scale(1.1);
+  box-shadow: 0 0 0 4px var(--accent), 0 30px 70px rgba(0, 0, 0, 0.7);
+}
+html[data-tv='true'] .grid-page .grid-eyebrow {
+  font-size: 17px;
+}
+html[data-tv='true'] .grid-page .grid-sub {
+  font-size: 19px;
+}

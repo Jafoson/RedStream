@@ -7,9 +7,9 @@ __pycache__/
 # C extensions
 *.so
 
-# Flutter web build output, copied here for the backend to serve at /app/
-# (see `flutter build web --base-href /app/` in DOCKER.md / README)
-src/aniworld/web/flutter_web/
+# RedStream TV web app build output, copied here for the backend to serve at
+# / (see `npm run build` in /webapp, Dockerfile's webapp-builder stage)
+src/aniworld/web/webapp_dist/
 
 # Distribution / packaging
 .Python

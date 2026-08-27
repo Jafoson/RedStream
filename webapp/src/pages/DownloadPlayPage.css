@@ -1,0 +1,47 @@
+.download-play {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+}
+
+.download-play__back {
+  margin: 30px var(--gutter-x);
+  align-self: flex-start;
+}
+
+.download-play__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  padding: 24px;
+}
+
+.download-play__progress {
+  width: 320px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+
+.download-play__progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.download-play__status {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.download-play__status--error {
+  color: #ff6b6b;
+}

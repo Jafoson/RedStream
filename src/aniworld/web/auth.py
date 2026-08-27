@@ -3,6 +3,7 @@ import re
 import secrets
 import time
 from functools import wraps
+from urllib.parse import quote
 
 from authlib.integrations.flask_client import OAuth
 from flask import (
@@ -10,7 +11,6 @@ from flask import (
     current_app,
     jsonify,
     redirect,
-    render_template,
     request,
     session,
     url_for,
@@ -23,11 +23,9 @@ from .db import (
     delete_user,
     find_or_create_sso_user,
     get_db,
-    has_any_admin,
     list_users,
     update_user_role,
     validate_api_token,
-    verify_user,
 )
 
 logger = get_logger(__name__)
@@ -140,7 +138,7 @@ def refresh_session_role():
         row = conn.execute("SELECT role FROM users WHERE id = ?", (uid,)).fetchone()
         if not row:
             session.clear()
-            return redirect(url_for("auth.login"))
+            return None
         session["user_role"] = row["role"]
         session["_role_checked"] = time.time()
     finally:
@@ -157,7 +155,10 @@ def login_required(f):
             return f(*args, **kwargs)
         if request.is_json or request.path.startswith("/api/"):
             return jsonify({"error": "authentication required"}), 401
-        return redirect(url_for("auth.login"))
+        # Every non-API, non-exempt route wrapped by this decorator is the
+        # React SPA shell (see app.py's _exempt set) — bounce to the root and
+        # let it render its own login screen rather than a server-side page.
+        return redirect(url_for("index"))
 
     return decorated
 
@@ -180,7 +181,7 @@ def admin_required(f):
             return f(*args, **kwargs)
         if request.is_json or request.path.startswith("/api/"):
             return jsonify({"error": "authentication required"}), 401
-        return redirect(url_for("auth.login"))
+        return redirect(url_for("index"))
 
     return decorated
 
@@ -192,87 +193,29 @@ def admin_required(f):
 auth_bp = Blueprint("auth", __name__)
 
 
-@auth_bp.route("/login", methods=["GET", "POST"])
-def login():
-    force_sso = current_app.config.get("FORCE_SSO", False)
-    oidc_enabled = current_app.config.get("OIDC_ENABLED", False)
-    oidc_display_name = current_app.config.get("OIDC_DISPLAY_NAME", "SSO")
-
-    if not force_sso and not has_any_admin():
-        return redirect(url_for("auth.setup"))
-
-    error = None
-    if request.method == "POST" and not force_sso:
-        username = (request.form.get("username") or "").strip()
-        password = request.form.get("password") or ""
-        user, err = verify_user(username, password)
-        if user:
-            session.permanent = True
-            session["user_id"] = user["id"]
-            session["user_name"] = user["username"]
-            session["user_role"] = user["role"]
-            return redirect(url_for("index"))
-        error = err
-
-    return render_template(
-        "login.html",
-        error=error,
-        oidc_enabled=oidc_enabled,
-        oidc_display_name=oidc_display_name,
-        force_sso=force_sso,
-    )
-
-
-@auth_bp.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("auth.login"))
-
-
-@auth_bp.route("/setup", methods=["GET", "POST"])
-def setup():
-    if current_app.config.get("FORCE_SSO", False):
-        return redirect(url_for("auth.login"))
-
-    if has_any_admin():
-        return redirect(url_for("auth.login"))
-
-    error = None
-    if request.method == "POST":
-        username = (request.form.get("username") or "").strip()
-        password = request.form.get("password") or ""
-        confirm = request.form.get("confirm") or ""
-
-        if not username:
-            error = "Username is required."
-        elif len(username) > 64:
-            error = "Username must be at most 64 characters."
-        elif not re.match(r"^[a-zA-Z0-9._-]+$", username):
-            error = "Username may only contain letters, digits, dots, hyphens, and underscores."
-        elif len(password) < 8:
-            error = "Password must be at least 8 characters."
-        elif password != confirm:
-            error = "Passwords do not match."
-        else:
-            uid = create_user(username, password, role="admin")
-            session.permanent = True
-            session["user_id"] = uid
-            session["user_name"] = username
-            session["user_role"] = "admin"
-            return redirect(url_for("index"))
-
-    return render_template("setup.html", error=error)
+def _redirect_with_login_error(message):
+    """Send the browser back to the React SPA's root with an error the login
+    screen can surface — used where an OIDC round-trip fails server-side, so
+    there's no JSON response to return instead (this is a real browser
+    navigation, not a fetch() call)."""
+    return redirect("/?login_error=" + quote(message))
 
 
 # ---------------------------------------------------------------------------
 # OIDC routes
+#
+# Local username/password login and first-run admin setup are handled by the
+# React SPA itself via the JSON endpoints (POST /api/auth/login, POST
+# /api/auth/setup in app.py) — no server-rendered pages needed for those.
+# OIDC/SSO stays here because it's a server-side redirect dance with the
+# identity provider that a fetch() call can't perform.
 # ---------------------------------------------------------------------------
 
 
 @auth_bp.route("/oidc/login")
 def oidc_login():
     if not current_app.config.get("OIDC_ENABLED", False):
-        return redirect(url_for("auth.login"))
+        return redirect("/")
     try:
         nonce = secrets.token_urlsafe(32)
         session["oidc_nonce"] = nonce
@@ -280,19 +223,15 @@ def oidc_login():
         return oauth.oidc.authorize_redirect(redirect_uri, nonce=nonce)
     except Exception:
         logger.exception("SSO provider unavailable")
-        return render_template(
-            "login.html",
-            error="SSO provider is currently unavailable. Please try again later.",
-            oidc_enabled=current_app.config.get("OIDC_ENABLED", False),
-            oidc_display_name=current_app.config.get("OIDC_DISPLAY_NAME", "SSO"),
-            force_sso=current_app.config.get("FORCE_SSO", False),
+        return _redirect_with_login_error(
+            "SSO provider is currently unavailable. Please try again later."
         )
 
 
 @auth_bp.route("/oidc/callback")
 def oidc_callback():
     if not current_app.config.get("OIDC_ENABLED", False):
-        return redirect(url_for("auth.login"))
+        return redirect("/")
 
     try:
         token = oauth.oidc.authorize_access_token()
@@ -334,21 +273,11 @@ def oidc_callback():
         return redirect(url_for("index"))
 
     except ValueError as e:
-        return render_template(
-            "login.html",
-            error=str(e),
-            oidc_enabled=current_app.config.get("OIDC_ENABLED", False),
-            oidc_display_name=current_app.config.get("OIDC_DISPLAY_NAME", "SSO"),
-            force_sso=current_app.config.get("FORCE_SSO", False),
-        )
+        return _redirect_with_login_error(str(e))
     except Exception:
         logger.exception("SSO login failed")
-        return render_template(
-            "login.html",
-            error="SSO login failed. Please try again or contact an administrator.",
-            oidc_enabled=current_app.config.get("OIDC_ENABLED", False),
-            oidc_display_name=current_app.config.get("OIDC_DISPLAY_NAME", "SSO"),
-            force_sso=current_app.config.get("FORCE_SSO", False),
+        return _redirect_with_login_error(
+            "SSO login failed. Please try again or contact an administrator."
         )
 
 
@@ -360,7 +289,9 @@ def oidc_callback():
 @auth_bp.route("/admin")
 @admin_required
 def admin_dashboard():
-    return redirect(url_for("settings_page"))
+    # Settings (including user management) is now a client-side route inside
+    # the React SPA, not a server-rendered page.
+    return redirect("/settings")
 
 
 @auth_bp.route("/admin/api/users")

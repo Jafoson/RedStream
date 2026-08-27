@@ -1,0 +1,90 @@
+.storage-banner {
+  margin: 20px var(--gutter-x) 0;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.storage-banner__root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.storage-banner__row {
+  display: flex;
+  justify-content: space-between;
+}
+
+.storage-banner__bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+
+.storage-banner__fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.library-page__tree {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 30px var(--gutter-x) 10px;
+}
+
+.library-location {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.library-title {
+  padding: 0;
+  overflow: hidden;
+  transition: box-shadow 0.14s, transform 0.14s;
+}
+.library-title.is-foc {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.library-title__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: none;
+  border: none;
+  text-align: left;
+}
+
+.library-title__body {
+  padding: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.library-season {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+}
+
+.library-episode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.library-title__delete-all {
+  align-self: flex-start;
+  color: #ff6b6b;
+}

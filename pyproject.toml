@@ -71,10 +71,7 @@ aniworld = [
   ".env.example",
   "ascii/ASCII.txt",
   "aniskip/scripts/*.lua",
-  "web/templates/*.html",
-  "web/static/*.css",
-  "web/static/*.js",
-  "web/flutter_web/**/*",
+  "web/webapp_dist/**/*",
   "browsers.jsonl",
 ]
 
