@@ -261,6 +261,27 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     }
   }, [focus.region, focus.row])
 
+  // Moves REAL DOM focus (not just the `.is-foc` CSS class) onto whichever
+  // element `{region,row,col}` currently points at. This entire engine used
+  // to be purely a visual simulation — `.is-foc` was only ever a className,
+  // `document.activeElement` never moved — which works fine for our own
+  // keydown listener, but embedded TV browsers (Vewd/Opera TV Store, and
+  // Chromium's own built-in Spatial Navigation some of them expose) decide
+  // whether to hand the D-pad to *their* native focus-movement engine (or,
+  // on generic non-TV-aware pages, fall back to emulating an on-screen mouse
+  // pointer instead) based on whether the page actually has real, focusable,
+  // `:focus`-tracked elements — see the CSS3 UI spatial-navigation model and
+  // Vewd/Opera's own "tweaking spatial navigation" guidance, both of which
+  // operate on genuinely focusable elements, never on a CSS class alone. A
+  // page whose focus state lives only in React/CSS is indistinguishable, to
+  // the browser, from an arbitrary site with no keyboard support at all.
+  // `preventScroll: true` avoids double-fighting `useAutoScrollRow`/`Rail`'s
+  // own scroll-into-view, which already runs off this same state change.
+  useEffect(() => {
+    const el = document.querySelector<HTMLElement>('.is-foc')
+    if (el && document.activeElement !== el) el.focus({ preventScroll: true })
+  }, [focus.region, focus.row, focus.col])
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (suspendedRef.current) return

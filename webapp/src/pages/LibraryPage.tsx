@@ -56,6 +56,7 @@ export function LibraryPage() {
         key={key}
         className={'library-title panel row-anchor' + (isFoc ? ' is-foc' : '')}
         data-row={row}
+        tabIndex={-1}
         onMouseEnter={(e) => setFocus({ region: 'content', row, col: 0 }, e)}
       >
         <button type="button" className="library-title__header" onClick={() => toggle(key)}>

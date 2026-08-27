@@ -11,6 +11,18 @@ body,
   overflow: hidden;
 }
 
+/* Every element FocusEngine.tsx drives (`.is-foc`) now also receives real
+ * native DOM focus (see FocusEngine's own comment on that effect) so
+ * TV-platform browsers recognize the page as keyboard/D-pad-navigable —
+ * `.is-foc`'s own box-shadow/scale/border styling is already this app's
+ * complete focus-ring design, so the browser's native outline would only
+ * ever double up on it (or show through, unstyled, when JS hasn't run yet).
+ * `.text-input:focus` below already sets its own `outline: none` plus a
+ * real replacement indicator, so this doesn't remove *that* affordance. */
+:focus {
+  outline: none;
+}
+
 /* Tells TV-platform browsers with a built-in D-pad/remote spatial-navigation
  * engine (Samsung Tizen, some Chromium builds behind the CSS Spatial
  * Navigation flag) that this app already implements its own arrow-key

@@ -33,6 +33,7 @@ export function EpisodeRow({ episode, progress, rowIndex, isNextUp, seriesBackdr
     <div
       className={'eprow row-anchor' + (isFocused ? ' is-foc' : '') + (isNextUp ? ' eprow--next' : '')}
       data-row={rowIndex}
+      tabIndex={-1}
       onMouseEnter={onHover}
       onClick={onClick}
     >

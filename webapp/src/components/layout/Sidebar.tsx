@@ -32,6 +32,7 @@ export function Sidebar({ active, onSelect, onProfileSwitch }: SidebarProps) {
         <div
           key={item.tab}
           className={'navitem' + (isActive ? ' active' : '') + (isFoc ? ' is-foc' : '')}
+          tabIndex={-1}
           onMouseEnter={(e) => setFocus({ region: 'sidebar', row: idx, col: 0 }, e)}
           onClick={() => activate(item)}
         >

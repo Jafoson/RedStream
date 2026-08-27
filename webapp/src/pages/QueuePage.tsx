@@ -98,6 +98,7 @@ export function QueuePage() {
               key={item.id}
               className={'queue-item panel row-anchor' + (isFoc ? ' is-foc' : '')}
               data-row={i}
+              tabIndex={-1}
               onMouseEnter={(e) => setFocus({ region: 'content', row: i, col: 0 }, e)}
             >
               <div className="queue-item__row">
@@ -144,6 +145,7 @@ export function QueuePage() {
               key={item.id}
               className={'queue-item panel row-anchor' + (isFoc ? ' is-foc' : '')}
               data-row={row}
+              tabIndex={-1}
               onMouseEnter={(e) => setFocus({ region: 'content', row, col: 0 }, e)}
             >
               <div className="queue-item__row">
