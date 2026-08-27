@@ -33,15 +33,22 @@ function seekStepFor(heldMs: number): number {
 // notably, the numpad Enter key reports a distinct e.code ('NumpadEnter')
 // while e.key is 'Enter' on both in every browser this was tested against,
 // but this covers the numpad case explicitly too rather than assuming.
+// Arrow keys additionally fall back to e.keyCode (37/38/39/40 — the classic
+// VK_LEFT/UP/RIGHT/DOWN values, unchanged since Netscape 4 and still the
+// most universally consistent of the three) and the older, pre-UI-Events-L3
+// e.key names 'Up'/'Down'/'Left'/'Right' — e.g. Vewd/Opera TV Store's own
+// developer docs recommend `event.key == 'Up'`, and a remote-synthesized
+// KeyboardEvent (no real physical keyboard behind a TV remote's D-pad) may
+// not populate e.code at all.
 function normalizeKey(e: KeyboardEvent): string {
   if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.keyCode === 13) return 'Enter'
   if (e.key === ' ' || e.code === 'Space' || e.keyCode === 32) return ' '
   if (e.key === 'Escape' || e.code === 'Escape' || e.keyCode === 27) return 'Escape'
   if (e.key === 'Backspace' || e.code === 'Backspace' || e.keyCode === 8) return 'Backspace'
-  if (e.key === 'ArrowUp' || e.code === 'ArrowUp') return 'ArrowUp'
-  if (e.key === 'ArrowDown' || e.code === 'ArrowDown') return 'ArrowDown'
-  if (e.key === 'ArrowLeft' || e.code === 'ArrowLeft') return 'ArrowLeft'
-  if (e.key === 'ArrowRight' || e.code === 'ArrowRight') return 'ArrowRight'
+  if (e.key === 'ArrowUp' || e.key === 'Up' || e.code === 'ArrowUp' || e.keyCode === 38) return 'ArrowUp'
+  if (e.key === 'ArrowDown' || e.key === 'Down' || e.code === 'ArrowDown' || e.keyCode === 40) return 'ArrowDown'
+  if (e.key === 'ArrowLeft' || e.key === 'Left' || e.code === 'ArrowLeft' || e.keyCode === 37) return 'ArrowLeft'
+  if (e.key === 'ArrowRight' || e.key === 'Right' || e.code === 'ArrowRight' || e.keyCode === 39) return 'ArrowRight'
   return e.key
 }
 

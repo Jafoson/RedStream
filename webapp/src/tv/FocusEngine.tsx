@@ -12,6 +12,26 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 // hover travels.
 const MOUSE_JITTER_THRESHOLD_SQ = 4
 
+// Some embedded TV browsers (e.g. Vewd/Opera TV Store — see its own
+// developer docs, which recommend checking `event.key == 'Up'`) still
+// report D-pad arrow presses using the older, pre-UI-Events-Level-3 `key`
+// values instead of the standard 'ArrowUp'/'ArrowDown'/'ArrowLeft'/
+// 'ArrowRight' every other target here uses; a remote-synthesized event (no
+// real physical keyboard behind a TV remote's D-pad) may also skip `e.code`
+// entirely, so this also falls back to the classic VK_LEFT/UP/RIGHT/DOWN
+// `e.keyCode` values (37/38/39/40), unchanged since Netscape 4 and the most
+// universally consistent of the three. Normalized once at the top of the
+// keydown handler so the rest of this file only ever deals with the modern
+// names — same defensive pattern as PlayerControls.tsx's normalizeKey.
+function normalizeArrowKey(e: KeyboardEvent): string {
+  const key = e.key
+  if (key === 'Up' || e.keyCode === 38) return 'ArrowUp'
+  if (key === 'Down' || e.keyCode === 40) return 'ArrowDown'
+  if (key === 'Left' || e.keyCode === 37) return 'ArrowLeft'
+  if (key === 'Right' || e.keyCode === 39) return 'ArrowRight'
+  return key
+}
+
 export type FocusRegion = 'sidebar' | 'content'
 /** Which input produced the current focus — mouse hover must NOT trigger
  * scroll-into-view (a user moving the mouse across a rail shouldn't yank the
@@ -244,7 +264,7 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (suspendedRef.current) return
-      const key = e.key
+      const key = normalizeArrowKey(e)
       if (key === 'Escape' || key === 'Backspace') {
         // Only intercept Backspace as "back" outside of text inputs — typing
         // in the search box or a dialog field must keep deleting characters.
