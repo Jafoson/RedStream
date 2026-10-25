@@ -1,5 +1,9 @@
 """Library, genre and page endpoints."""
 
+from urllib.parse import parse_qs, urlsplit
+
+import curl_cffi.requests
+import niquests
 import pytest
 
 from aniworld.web import db
@@ -12,6 +16,96 @@ def empty_browse_cache():
     api_media._browse_cache.clear()
     yield
     api_media._browse_cache.clear()
+
+
+@pytest.mark.parametrize("site", ["moflix", "aniworld", "htv"])
+def test_search_errors_are_reported_without_exposing_exception_details(
+    client, monkeypatch, caplog, site
+):
+    from aniworld import search
+    from aniworld.web import sitesearch
+
+    def fail(keyword):
+        raise RuntimeError("private-session-value")
+
+    monkeypatch.setitem(sitesearch.SITE_SEARCH, site, fail)
+    monkeypatch.setattr(search, "query_hanime", fail)
+    response = client.post("/api/search", json={"site": site, "keyword": "test"})
+    assert response.status_code == 502
+    assert "error" in response.get_json()
+    assert "results" not in response.get_json()
+    assert "private-session-value" not in response.get_data(as_text=True)
+    assert "private-session-value" not in caplog.text
+
+
+def test_search_distinguishes_no_matches_from_upstream_failure(client, monkeypatch):
+    monkeypatch.setitem(api_media.sitesearch.SITE_SEARCH, "moflix", lambda keyword: [])
+    response = client.post("/api/search", json={"site": "moflix", "keyword": "test"})
+    assert response.status_code == 200
+    assert response.get_json() == {"results": []}
+
+
+def test_aggregate_search_can_still_skip_a_failed_source(monkeypatch):
+    from aniworld.web import sitesearch
+
+    def fail(keyword):
+        raise RuntimeError("upstream down")
+
+    monkeypatch.setattr(sitesearch, "MOVIE_SITES", ("moflix", "kinox"))
+    monkeypatch.setitem(sitesearch.SITE_SEARCH, "moflix", fail)
+    monkeypatch.setitem(
+        sitesearch.SITE_SEARCH,
+        "kinox",
+        lambda keyword: [
+            {"title": "Example", "url": "https://kinox.to/Stream/test.html"}
+        ],
+    )
+    assert sitesearch.aggregate("test", "movie")[0]["site"] == "kinox"
+
+
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("post", "/api/search", {"site": "moflix", "keyword": "test"}),
+        ("get", "/api/moflix-movies", None),
+        ("get", "/api/genre?site=moflix&slug=Action", None),
+    ],
+)
+def test_moflix_failures_have_public_errors_and_can_be_retried(
+    client, monkeypatch, method, path, body
+):
+    import json
+
+    from aniworld.models.moflix_stream import http
+
+    calls = []
+
+    def fetch(url, *args):
+        calls.append(url)
+        response = http.requests.Response()
+        response.status_code = 200
+        if len(calls) == 1:
+            response.content = b"<title>Just a moment...</title>"
+        elif url == http.BASE_URL + "/":
+            response.content = b'window.bootstrapData = {"csrf_token": "test"};'
+        else:
+            title = {"id": 42, "name": "Silo", "model_type": "title"}
+            response.headers["Content-Type"] = "application/json"
+            response.content = json.dumps(
+                {"results": [title], "titles": [title], "pagination": {"data": [title]}}
+            ).encode()
+        return response
+
+    monkeypatch.setattr(http, "get_response", fetch)
+    request = getattr(client, method)
+    failed = request(path, json=body)
+    assert failed.status_code == 502
+    assert "verification" in failed.get_json()["error"]
+    assert api_media._browse_cache == {}
+    retried = request(path, json=body)
+    assert retried.status_code == 200
+    assert retried.get_json()["results"][0]["title"] == "Silo"
+    assert len(calls) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -108,13 +202,13 @@ def test_every_library_endpoint_closes_when_the_library_is_off(client, monkeypat
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def genres(monkeypatch):
-    from aniworld import search
+    from aniworld.web import sitesearch
 
     listing = [
         {"name": "Action", "slug": "action"},
         {"name": "Mecha", "slug": "mecha"},
     ]
-    monkeypatch.setattr(api_media, "fetch_genres", lambda: listing)
+    monkeypatch.setattr(sitesearch, "genres", lambda site: listing)
 
     pages = {}
 
@@ -122,7 +216,6 @@ def genres(monkeypatch):
         return pages.get((slug, page))
 
     monkeypatch.setattr(api_media, "fetch_genre_animes", fetch)
-    assert search is not None
     return pages
 
 
@@ -155,12 +248,28 @@ def test_a_later_page_is_requested(client, genres):
     assert client.get("/api/genre?slug=mecha&page=2").get_json()["page"] == 2
 
 
-@pytest.mark.parametrize("slug", ["", "nope", "../../etc/passwd", "action/../mecha"])
-def test_an_unknown_genre_is_a_404(client, genres, slug):
-    """The slug goes into a URL, so only known ones are allowed through."""
-    response = client.get(f"/api/genre?slug={slug}")
+@pytest.mark.parametrize("slug", ["", "../../etc/passwd", "action/../mecha"])
+def test_invalid_genre_path_is_rejected(client, genres, slug):
+    assert client.get(f"/api/genre?slug={slug}").status_code == 400
+
+
+def test_genre_missing_from_discovery_can_be_requested(client, genres):
+    genres[("new-genre", 1)] = {"results": [], "has_more": False}
+    assert client.get("/api/genre?slug=new-genre").status_code == 200
+
+
+def test_site_404_is_reported(client, monkeypatch):
+    import niquests
+
+    def fetch(slug, page=1):
+        response = niquests.Response()
+        response.status_code = 404
+        response.raise_for_status()
+
+    monkeypatch.setattr(api_media, "fetch_genre_animes", fetch)
+    response = client.get("/api/genre?slug=missing")
     assert response.status_code == 404
-    assert response.get_json()["error"] == "Unknown genre"
+    assert response.get_json()["error"] == "Genre not available: missing"
 
 
 def test_a_non_numeric_page_is_a_400(client, genres):
@@ -203,6 +312,162 @@ def test_different_pages_are_cached_separately(client, genres, monkeypatch):
     assert calls == [("mecha", 1), ("mecha", 2)]
 
 
+def test_an_unknown_site_offers_no_genres(client):
+    assert client.get("/api/genres?site=unknown").get_json() == {"genres": []}
+    assert client.get("/api/genre?site=unknown&slug=action").status_code == 400
+
+
+def test_moflix_uses_the_same_genre_endpoints(client, monkeypatch):
+    from aniworld import search
+
+    def fetch(endpoint):
+        limit = int(parse_qs(urlsplit(endpoint).query)["limit"][0])
+        assert 1 <= limit <= 12
+        return {
+            "genres": ["Action"],
+            "titles": [
+                {"id": 42 + n, "name": f"Example {n}", "poster": ""}
+                for n in range(limit)
+            ],
+        }
+
+    monkeypatch.setattr(search, "_moflix_json", fetch)
+    assert client.get("/api/genres?site=moflix").get_json() == {
+        "genres": [{"name": "Action", "slug": "Action"}]
+    }
+    response = client.get("/api/genre?site=moflix&slug=Action")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert len(body["results"]) == 12
+    assert body["results"][0]["url"] == "https://moflix-stream.xyz/titles/42"
+    assert body["has_more"] is False
+
+
+@pytest.mark.parametrize("library", [niquests, curl_cffi.requests])
+@pytest.mark.parametrize("status", [404, 422, 503])
+def test_genre_http_errors_return_json(client, monkeypatch, library, status):
+    def fetch(site, genre, limit):
+        response = library.Response()
+        response.status_code = status
+        raise library.exceptions.HTTPError("upstream error", response=response)
+
+    monkeypatch.setattr(api_media.sitesearch, "genre_results", fetch)
+    response = client.get("/api/genre?site=moflix&slug=Action")
+    assert response.status_code == (404 if status == 404 else 502)
+    assert response.get_json() == {
+        "error": "Genre not available: Action"
+        if status == 404
+        else "Failed to fetch genre Action"
+    }
+    assert "genre:moflix:Action:1" not in api_media._browse_cache
+
+
+@pytest.mark.parametrize("library", [niquests, curl_cffi.requests])
+def test_genre_timeouts_return_json(client, monkeypatch, library):
+    def fetch(site, genre, limit):
+        raise library.exceptions.Timeout("upstream timed out")
+
+    monkeypatch.setattr(api_media.sitesearch, "genre_results", fetch)
+    response = client.get("/api/genre?site=moflix&slug=Action")
+    assert response.status_code == 502
+    assert response.get_json() == {"error": "Failed to fetch genre Action"}
+    assert "genre:moflix:Action:1" not in api_media._browse_cache
+
+
+def test_the_genre_list_is_cached_per_site(client, monkeypatch):
+    from aniworld.web import sitesearch
+
+    calls = []
+
+    def listing(site):
+        calls.append(site)
+        return [{"name": "Horror", "slug": "horror"}]
+
+    monkeypatch.setattr(sitesearch, "genres", listing)
+    client.get("/api/genres?site=kinox")
+    client.get("/api/genres?site=kinox")
+    client.get("/api/genres?site=megakino")
+    assert calls == ["kinox", "megakino"], "only the second kinox call is cached"
+
+
+@pytest.fixture
+def flat_listing(monkeypatch):
+    """Every site but aniworld hands back one list instead of pages."""
+    from aniworld.web import sitesearch
+
+    calls = []
+    titles = [
+        {"title": f"Movie {n}", "url": f"https://kinox.to/{n}.html", "poster": ""}
+        for n in range(100)
+    ]
+
+    def results(site, genre, limit):
+        calls.append((site, genre, limit))
+        page = titles[:limit]
+        return page, len(page) >= limit
+
+    monkeypatch.setattr(sitesearch, "genre_results", results)
+    return calls
+
+
+def test_a_flat_listing_is_sliced_into_pages(client, flat_listing):
+    body = client.get("/api/genre?site=kinox&slug=Horror&page=2").get_json()
+    # one title past the page, which is what settles has_more
+    assert flat_listing == [("kinox", "Horror", 61)]
+    assert [item["title"] for item in body["results"]] == [
+        f"Movie {n}" for n in range(30, 60)
+    ]
+    assert body["has_more"] is True
+
+
+def test_the_end_of_a_flat_listing_reports_no_more(client, monkeypatch):
+    from aniworld.web import sitesearch
+
+    monkeypatch.setattr(
+        sitesearch,
+        "genre_results",
+        lambda site, genre, limit: (
+            [{"title": "Nosferatu", "url": "https://x/1", "poster": "https://x/p.jpg"}],
+            False,
+        ),
+    )
+    body = client.get("/api/genre?site=megakino&slug=horror").get_json()
+    assert body["has_more"] is False
+    assert body["results"][0]["poster_url"].startswith("/api/proxy-image?url=")
+
+
+def test_a_full_page_the_site_could_not_fill_still_offers_more(client, monkeypatch):
+    """A title normalising away must not read as the end of the listing."""
+    from aniworld.web import sitesearch
+
+    monkeypatch.setattr(
+        sitesearch,
+        "genre_results",
+        lambda site, genre, limit: (
+            [
+                {"title": f"Show {n}", "url": f"https://x/{n}", "poster": ""}
+                for n in range(limit - 1)
+            ],
+            True,
+        ),
+    )
+    body = client.get("/api/genre?site=sto&slug=horror").get_json()
+    assert len(body["results"]) == 30
+    assert body["has_more"] is True
+
+
+def test_a_genre_a_site_does_not_have_is_a_404(client, monkeypatch):
+    from aniworld.web import sitesearch
+
+    def results(site, genre, limit):
+        raise ValueError(f"BurningSeries genre not available: {genre}")
+
+    monkeypatch.setattr(sitesearch, "genre_results", results)
+    response = client.get("/api/genre?site=burningseries&slug=missing")
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "Genre not available: missing"
+
+
 # ---------------------------------------------------------------------------
 # Browse rows
 # ---------------------------------------------------------------------------
@@ -221,7 +486,7 @@ def test_a_browse_row_is_served_from_the_cache(client):
 
 
 def test_a_browse_row_that_fails_is_a_500(client, monkeypatch):
-    monkeypatch.setattr(api_media, "_cached", lambda key, fetch: None)
+    monkeypatch.setattr(api_media, "_cached", lambda key, fetch, **kwargs: None)
     assert client.get("/api/new-animes").status_code == 500
 
 

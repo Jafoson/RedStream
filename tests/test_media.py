@@ -207,7 +207,7 @@ def test_the_mangafire_format_defaults_to_jpg():
 
 
 def test_the_mangafire_format_can_be_changed(monkeypatch):
-    monkeypatch.setenv("MANGAFIRE_FORMAT", "pdf")
+    monkeypatch.setenv("ANIWORLD_MANGAFIRE_FORMAT", "pdf")
     assert media.mangafire_format() == "pdf"
 
 
@@ -226,7 +226,7 @@ def test_mangafire_loads_every_chapter_page(monkeypatch):
         return SimpleNamespace(json=lambda: next(pages))
 
     monkeypatch.setattr(mangafire, "_get", get)
-    found = mangafire.MangaFireToSeries("https://mangafire.to/title/test-title")
+    found = mangafire.MangaFireToSeries("https://mangafire.to/title/z9w-velvet-kisss")
 
     assert found.chapters_data["items"] == [{"id": 1}, {"id": 2}]
     assert [url.split("page=")[1].split("&")[0] for url in calls] == ["1", "2", "3"]
@@ -300,10 +300,10 @@ def test_one_flag_does_not_turn_on_the_other(client, monkeypatch):
 def test_hiding_a_tab_leaves_its_neighbours_alone(client):
     """The browse rows sit in one list, so a bad {% if %} would swallow them."""
     body = client.get("/").get_data(as_text=True)
+    assert 'data-row="kinox_movies"' not in body
     for row in (
         "popular_movies",
         "filmpalast_movies",
-        "cineby_movies",
         "mangafire_trending",
     ):
         assert f'data-row="{row}"' in body, row

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import threading
@@ -98,6 +99,23 @@ from .db import (
 )
 
 logger = get_logger(__name__)
+
+# Werkzeug types static files from the stdlib mimetypes table, which is seeded
+# from the machine: the registry on Windows, /etc/mime.types elsewhere. Plenty
+# of installs have .js mapped to text/plain there, and paired with the nosniff
+# header below that makes every browser refuse the web app's scripts and
+# stylesheet. Pin the types we serve ourselves.
+_STATIC_MIME_TYPES = (
+    (".js", "text/javascript"),
+    (".mjs", "text/javascript"),
+    (".css", "text/css"),
+    (".json", "application/json"),
+    (".svg", "image/svg+xml"),
+    (".webp", "image/webp"),
+    (".woff2", "font/woff2"),
+)
+for _ext, _mime in _STATIC_MIME_TYPES:
+    mimetypes.add_type(_mime, _ext)
 
 
 def _get_working_providers():
@@ -2747,16 +2765,37 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             token = create_api_token(uid)
             return jsonify({"token": token, "username": username, "role": "admin"})
 
+        from .throttle import LoginThrottle
+
+        _login_throttle = LoginThrottle()
+
         @app.route("/api/auth/login", methods=["POST"])
         def api_auth_login():
+            import math
+
             from .db import verify_user as _verify_user
 
             data = request.get_json(silent=True) or {}
             username = (data.get("username") or "").strip()
             password = data.get("password") or ""
+            ip = request.remote_addr
+
+            wait = _login_throttle.retry_after(ip, username)
+            if wait:
+                minutes = max(1, math.ceil(wait / 60))
+                resp = jsonify(
+                    {"error": f"Too many failed attempts. Try again in {minutes} minute(s)."}
+                )
+                resp.headers["Retry-After"] = str(math.ceil(wait))
+                return resp, 429
+
             user, err = _verify_user(username, password)
             if not user:
+                logger.warning("Failed login: user=%r ip=%s", username, ip)
+                if _login_throttle.record_failure(ip, username):
+                    logger.warning("Login locked out: user=%r ip=%s", username, ip)
                 return jsonify({"error": err}), 401
+            _login_throttle.record_success(username)
             token = create_api_token(user["id"])
             return jsonify({"token": token, "username": user["username"], "role": user["role"]})
 
@@ -2829,4 +2868,22 @@ def start_web_ui(
         # that serializes behind whatever's already in flight, which is a
         # real, user-visible source of the web UI feeling much slower than
         # the native app (which has no such shared bottleneck per client).
-        serve(app, host=host, port=port, threads=16)
+        serve(app, host=host, port=port, threads=16, **_proxy_options())
+
+
+def _proxy_options():
+    """Let waitress take the client IP from a reverse proxy we trust.
+
+    Only connections coming from ANIWORLD_WEB_TRUSTED_PROXY may set
+    X-Forwarded-For, the header is stripped from everyone else so a client
+    cannot fake its address (the login throttle counts per IP).
+    """
+    trusted_proxy = os.getenv("ANIWORLD_WEB_TRUSTED_PROXY", "").strip()
+    if not trusted_proxy:
+        return {}
+    return {
+        "trusted_proxy": trusted_proxy,
+        "trusted_proxy_count": 1,
+        "trusted_proxy_headers": {"x-forwarded-for", "x-forwarded-proto"},
+        "clear_untrusted_proxy_headers": True,
+    }

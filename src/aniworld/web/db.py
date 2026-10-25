@@ -1,5 +1,7 @@
+import functools
 import json
 import os
+import secrets
 import sqlite3
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -107,6 +109,11 @@ def create_user(username, password, role="user"):
         conn.close()
 
 
+@functools.cache
+def _dummy_password_hash():
+    return generate_password_hash(secrets.token_hex(16))
+
+
 def verify_user(username, password):
     conn = get_db()
     try:
@@ -115,6 +122,8 @@ def verify_user(username, password):
             (username,),
         ).fetchone()
         if not row:
+            # Hash anyway so the response time does not reveal which usernames exist
+            check_password_hash(_dummy_password_hash(), password)
             return None, "Invalid username or password."
         if row["auth_method"] != "local":
             return None, "This account uses SSO. Please use the SSO login button."

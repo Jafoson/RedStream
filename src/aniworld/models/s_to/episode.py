@@ -10,7 +10,6 @@ from ...config import (
     build_provider_attempt_order,
     logger,
 )
-from ...extractors import provider_functions
 from ..common import check_downloaded
 from ..common.common import (
     download as episode_download,
@@ -21,7 +20,9 @@ from ..common.common import (
 from ..common.common import (
     watch as episode_watch,
 )
-from .http import sto_get, sto_host
+from ..common.extraction import resolve_stream_url
+from ..common.paths import resolve_download_path
+from .http import response_text, sto_get, sto_host
 
 
 # -----------------------------
@@ -220,16 +221,9 @@ class SerienstreamEpisode:
     @property
     def selected_path(self):
         if self.__selected_path is None:
-            raw_path = self.__selected_path_param or os.getenv(
-                "ANIWORLD_DOWNLOAD_PATH", str(Path.home() / "Downloads")
+            self.__selected_path = str(
+                resolve_download_path(self.__selected_path_param)
             )
-
-            path = Path(raw_path).expanduser()
-
-            if not path.is_absolute():
-                path = Path.home() / path
-
-            self.__selected_path = str(path)
         return self.__selected_path
 
     @selected_path.setter
@@ -322,6 +316,7 @@ class SerienstreamEpisode:
                 or not parsed_provider.netloc
                 or parsed_provider.netloc == redirect_netloc
             ):
+                self.__provider_url = None
                 raise ValueError(
                     f"Failed to resolve provider URL for {self.selected_provider} "
                     f"from redirect {self.redirect_url}"
@@ -330,16 +325,7 @@ class SerienstreamEpisode:
 
     @property
     def stream_url(self):
-        try:
-            stream_url = provider_functions[
-                f"get_direct_link_from_{self.selected_provider.lower()}"
-            ](self.provider_url)
-        except KeyError:
-            raise ValueError(
-                f"The provider '{self.selected_provider}' is not yet implemented."
-            )
-
-        return stream_url
+        return resolve_stream_url(self)
 
     # TODO: add this into a common base class
     @property
@@ -453,7 +439,7 @@ class SerienstreamEpisode:
                 raise ValueError("Episode URL is missing for HTML fetch.")
             logger.debug(f"fetching ({self.url})...")
             resp = sto_get(self.url)
-            self.__html = resp.text
+            self.__html = response_text(resp, self.url)
         return self.__html
 
     # -----------------------------
