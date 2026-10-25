@@ -342,25 +342,25 @@ def parse_args():
     webui.add_argument(
         "--web-requests",
         action="store_true",
-        help="List web-app (Flutter web) access requests and exit",
+        help="List web-app and admin-dashboard access requests and exit",
     )
     webui.add_argument(
         "--web-approve",
         metavar="ID",
         type=int,
-        help="Approve a pending web-app access request by ID and exit",
+        help="Approve a pending web-app or admin-dashboard access request by ID and exit",
     )
     webui.add_argument(
         "--web-deny",
         metavar="ID",
         type=int,
-        help="Deny a pending web-app access request by ID and exit",
+        help="Deny a pending web-app or admin-dashboard access request by ID and exit",
     )
     webui.add_argument(
         "--web-revoke",
         metavar="ID",
         type=int,
-        help="Revoke a previously approved web-app access request by ID and exit",
+        help="Revoke a previously approved web-app or admin-dashboard access request by ID and exit",
     )
 
     # =========================
@@ -414,7 +414,12 @@ def parse_args():
 
         if args.web_approve is not None:
             ok, err, info = approve_web_access_request(args.web_approve)
-            if ok:
+            if ok and info["kind"] == "admin":
+                print(
+                    f"Approved admin request #{args.web_approve}. "
+                    f"That browser can open the admin dashboard for {info['hours']} hours."
+                )
+            elif ok:
                 print(
                     f"Approved request #{args.web_approve}. "
                     f"That browser is now logged in as admin '{info['username']}'."
@@ -444,10 +449,12 @@ def parse_args():
         if not rows:
             print("No web-app access requests yet.")
         else:
-            columns = ("ID", "Status", "IP", "User-Agent", "Requested")
+            columns = ("ID", "Type", "Code", "Status", "IP", "User-Agent", "Requested")
             table = [
                 (
                     str(r["id"]),
+                    r.get("kind") or "webapp",
+                    r.get("code") or "",
                     r["status"],
                     r["ip_address"] or "",
                     (r["user_agent"] or "")[:48],
@@ -459,7 +466,7 @@ def parse_args():
                 max(len(col), *(len(row[i]) for row in table))
                 for i, col in enumerate(columns)
             ]
-            print("Web-App Access Requests")
+            print("Access Requests (Type admin = admin dashboard)")
             print("  ".join(c.ljust(w) for c, w in zip(columns, widths)))
             for row in table:
                 print("  ".join(v.ljust(w) for v, w in zip(row, widths)))

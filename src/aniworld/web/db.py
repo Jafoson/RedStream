@@ -303,38 +303,151 @@ CREATE TABLE IF NOT EXISTS web_access_requests (
 """
 
 
+# kind = 'webapp': a browser asking to use the TV web app at all (approval
+#   issues a normal api_tokens bearer token, see approve_web_access_request).
+# kind = 'admin': an already-approved web app browser asking to open the admin
+#   dashboard (/verwaltung). Approval issues a separate, short-lived admin
+#   token that is only ever stored hashed (token_hash) once the browser has
+#   picked it up, and is only valid for /api/admin/* — never the other way
+#   round. Admin requests can only be approved from the server terminal, never
+#   from the dashboard itself.
+WEB_ACCESS_KINDS = ("webapp", "admin")
+ADMIN_SESSION_HOURS = 12
+
+# Short code shown both in the browser and in `aniworld --web-requests`, so
+# the admin can tell which pending request is the one in front of them.
+_ACCESS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _new_access_code():
+    return "".join(secrets.choice(_ACCESS_CODE_ALPHABET) for _ in range(6))
+
+
+def _hash_token(token):
+    import hashlib
+
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def init_web_access_requests_db():
     ANIWORLD_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     conn = get_db()
     try:
         conn.execute(_CREATE_WEB_ACCESS_REQUESTS_TABLE)
+        for column in (
+            "kind TEXT NOT NULL DEFAULT 'webapp'",
+            "code TEXT",
+            "token_hash TEXT",
+            "expires_at TEXT",
+        ):
+            try:
+                conn.execute(f"ALTER TABLE web_access_requests ADD COLUMN {column}")
+            except Exception:
+                pass  # column already exists
         conn.commit()
     finally:
         conn.close()
 
 
-def create_web_access_request(device_id, ip_address, user_agent):
+def create_web_access_request(device_id, ip_address, user_agent, kind="webapp"):
+    """Store a pending request; returns its confirmation code."""
+    if kind not in WEB_ACCESS_KINDS:
+        raise ValueError(f"unknown access request kind: {kind}")
+    code = _new_access_code()
     conn = get_db()
     try:
         conn.execute(
-            "INSERT INTO web_access_requests (device_id, ip_address, user_agent) "
-            "VALUES (?, ?, ?)",
-            (device_id, ip_address, user_agent),
+            "INSERT INTO web_access_requests (device_id, ip_address, user_agent, kind, code) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (device_id, ip_address, user_agent, kind, code),
         )
         conn.commit()
+        return code
     finally:
         conn.close()
 
 
-def get_web_access_request(device_id):
+def get_web_access_request(device_id, kind="webapp"):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT * FROM web_access_requests WHERE device_id = ?", (device_id,)
+            "SELECT * FROM web_access_requests WHERE device_id = ? AND kind = ?",
+            (device_id, kind),
         ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+def get_web_access_request_by_id(request_id):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM web_access_requests WHERE id = ?", (request_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def pick_up_admin_token(device_id):
+    """Hand an approved admin token to the browser exactly once.
+
+    Afterwards only its hash is kept, so the plaintext can't be read back out
+    of the database (or polled a second time by someone who learned the
+    device_id).
+    """
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, token FROM web_access_requests "
+            "WHERE device_id = ? AND kind = 'admin' AND status = 'approved'",
+            (device_id,),
+        ).fetchone()
+        if not row or not row["token"]:
+            return None
+        conn.execute(
+            "UPDATE web_access_requests SET token = NULL WHERE id = ?", (row["id"],)
+        )
+        conn.commit()
+        return row["token"]
+    finally:
+        conn.close()
+
+
+def validate_admin_token(token):
+    """Return the admin request row for a live admin session token, else None."""
+    if not token:
+        return None
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM web_access_requests WHERE kind = 'admin' "
+            "AND status = 'approved' AND token_hash = ? "
+            "AND expires_at > datetime('now')",
+            (_hash_token(token),),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def _public_access_request(row):
+    """A request row without its secrets, for listings."""
+    data = dict(row)
+    data.pop("token", None)
+    data.pop("token_hash", None)
+    if data.get("kind") == "admin" and data.get("status") == "approved":
+        expires = data.get("expires_at")
+        if expires and expires <= _sqlite_now():
+            data["status"] = "expired"
+    return data
+
+
+def _sqlite_now():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def list_web_access_requests(status=None):
@@ -349,7 +462,7 @@ def list_web_access_requests(status=None):
             rows = conn.execute(
                 "SELECT * FROM web_access_requests ORDER BY id DESC"
             ).fetchall()
-        return [dict(r) for r in rows]
+        return [_public_access_request(r) for r in rows]
     finally:
         conn.close()
 
@@ -368,6 +481,16 @@ def approve_web_access_request(request_id):
             return False, "Request not found.", None
         if row["status"] != "pending":
             return False, f"Request is already {row['status']}.", None
+        if row["kind"] == "admin":
+            token = secrets.token_urlsafe(32)
+            conn.execute(
+                "UPDATE web_access_requests SET status = 'approved', token = ?, "
+                "token_hash = ?, decided_at = datetime('now'), "
+                "expires_at = datetime('now', ?) WHERE id = ?",
+                (token, _hash_token(token), f"+{ADMIN_SESSION_HOURS} hours", request_id),
+            )
+            conn.commit()
+            return True, None, {"kind": "admin", "hours": ADMIN_SESSION_HOURS}
         admin = conn.execute(
             "SELECT id, username FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
         ).fetchone()
@@ -389,7 +512,11 @@ def approve_web_access_request(request_id):
             (token, request_id),
         )
         conn.commit()
-        return True, None, {"token": token, "username": admin["username"]}
+        return True, None, {
+            "kind": "webapp",
+            "token": token,
+            "username": admin["username"],
+        }
     finally:
         conn.close()
 
@@ -426,7 +553,8 @@ def revoke_web_access_request(request_id):
         if row["status"] != "approved":
             return False, "Only approved requests can be revoked."
         conn.execute(
-            "UPDATE web_access_requests SET status = 'revoked' WHERE id = ?",
+            "UPDATE web_access_requests SET status = 'revoked', token_hash = NULL "
+            "WHERE id = ?",
             (request_id,),
         )
         conn.commit()
@@ -1634,6 +1762,92 @@ def get_all_watch_progress(limit=50, profile_id=1):
             (profile_id, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_watch_history(profile_id=None, query=None, limit=100, offset=0):
+    """Watch history across profiles for the admin dashboard, newest first.
+
+    Returns (rows, total). Each row carries its profile's name/colour.
+    """
+    where, params = [], []
+    if profile_id is not None:
+        where.append("wp.profile_id = ?")
+        params.append(profile_id)
+    if query:
+        where.append("(wp.series_title LIKE ? OR wp.episode_title LIKE ?)")
+        like = f"%{query}%"
+        params.extend([like, like])
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    conn = get_db()
+    try:
+        total = conn.execute(
+            f"SELECT COUNT(*) AS cnt FROM watch_progress wp {where_sql}", params
+        ).fetchone()["cnt"]
+        rows = conn.execute(
+            f"""
+            SELECT wp.*, p.name AS profile_name, p.avatar_color AS profile_color
+            FROM watch_progress wp
+            LEFT JOIN profiles p ON p.id = wp.profile_id
+            {where_sql}
+            ORDER BY wp.updated_at DESC, wp.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows], total
+    finally:
+        conn.close()
+
+
+def get_watch_stats_by_profile():
+    """{profile_id: {"entries", "completed", "last_watched"}} for every profile with history."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT profile_id,
+                   COUNT(*) AS entries,
+                   SUM(completed) AS completed,
+                   MAX(updated_at) AS last_watched
+            FROM watch_progress
+            GROUP BY profile_id
+            """
+        ).fetchall()
+        return {
+            r["profile_id"]: {
+                "entries": r["entries"],
+                "completed": r["completed"] or 0,
+                "last_watched": r["last_watched"],
+            }
+            for r in rows
+        }
+    finally:
+        conn.close()
+
+
+def delete_watch_progress_entry(entry_id):
+    """Forget one watched episode, as if that profile had never played it."""
+    conn = get_db()
+    try:
+        cur = conn.execute("DELETE FROM watch_progress WHERE id = ?", (entry_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_watch_progress_for_series(profile_id, series_url):
+    """Forget every watched episode of one series for one profile."""
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "DELETE FROM watch_progress WHERE profile_id = ? AND series_url = ?",
+            (profile_id, series_url),
+        )
+        conn.commit()
+        return cur.rowcount
     finally:
         conn.close()
 

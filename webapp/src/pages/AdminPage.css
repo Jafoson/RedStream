@@ -1,0 +1,345 @@
+.admin-page {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  background: var(--bg);
+  padding-bottom: 48px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 26px var(--gutter-x) 4px;
+}
+
+/* HeroSection.css positions every .back-btn absolutely over the hero; here
+   it sits in the header row. */
+.admin-header .back-btn {
+  position: static;
+  flex-shrink: 0;
+}
+
+.admin-header__session {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.admin-muted {
+  color: var(--muted);
+  margin: 0;
+}
+
+.admin-error {
+  color: #ff6b6b;
+  margin: 0;
+}
+
+/* ---- gate ---- */
+.admin-gate {
+  display: flex;
+  justify-content: center;
+  padding: 48px 16px;
+}
+
+.admin-gate__card {
+  max-width: 480px;
+  width: 100%;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+}
+
+.admin-gate__icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.admin-gate__code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  color: var(--gold);
+}
+
+.admin-gate__cmd {
+  padding: 12px 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  text-align: left;
+  white-space: pre;
+  margin: 0;
+}
+
+/* ---- tabs/content ---- */
+.filters.admin-tabs {
+  padding-bottom: 22px;
+}
+
+.admin-content .section-head {
+  margin-top: 8px;
+}
+
+.admin-message {
+  margin: 0 var(--gutter-x) 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
+.admin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 var(--gutter-x);
+  margin-bottom: 28px;
+}
+
+.admin-empty {
+  color: var(--muted-2);
+  padding: 18px 0;
+}
+
+.admin-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px 20px;
+  padding: 14px 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.admin-row--pending {
+  border-color: color-mix(in srgb, var(--gold) 55%, transparent);
+}
+
+.admin-row__main {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-row__title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-weight: 700;
+}
+
+.admin-row__id,
+.admin-row__ep {
+  color: var(--muted);
+}
+
+.admin-row__code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.12em;
+  color: var(--gold);
+}
+
+.admin-row__profile {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.admin-row__series {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.admin-row__meta {
+  color: var(--muted);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-row__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.btn-sm {
+  height: 40px;
+  padding: 0 16px;
+  font-size: 14px;
+}
+
+.btn-sm:disabled {
+  opacity: 0.5;
+}
+
+.admin-danger:hover {
+  color: #ff6b6b;
+}
+
+.admin-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-hint code {
+  color: var(--text);
+}
+
+.admin-badge,
+.admin-status {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.admin-badge--webapp {
+  background: var(--panel-3);
+  color: var(--text);
+}
+
+.admin-badge--admin {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--accent-2);
+}
+
+.admin-status--pending {
+  background: color-mix(in srgb, var(--gold) 20%, transparent);
+  color: var(--gold);
+}
+
+.admin-status--approved {
+  background: rgba(88, 196, 120, 0.16);
+  color: #6fd28c;
+}
+
+.admin-status--denied,
+.admin-status--revoked,
+.admin-status--expired {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted-2);
+}
+
+.admin-status--self {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+/* ---- history ---- */
+.admin-profiles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 10px;
+  padding: 0 var(--gutter-x) 16px;
+}
+
+.admin-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  text-align: left;
+  color: var(--text);
+}
+
+.admin-profile:hover {
+  border-color: var(--line-2);
+}
+
+.admin-profile.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.admin-profile__avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.admin-profile__name {
+  display: block;
+  font-weight: 700;
+}
+
+.admin-profile__stats {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.admin-profile__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.text-input.admin-search {
+  display: block;
+  box-sizing: border-box;
+  width: calc(100% - 2 * var(--gutter-x));
+  height: 46px;
+  margin: 0 var(--gutter-x) 18px;
+  max-width: 520px;
+}
+
+.admin-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--panel-3);
+  overflow: hidden;
+  max-width: 420px;
+}
+
+.admin-progress__bar {
+  height: 100%;
+  background: var(--accent);
+}
+
+.admin-more {
+  margin: 0 var(--gutter-x);
+}
+
+@media (max-width: 640px) {
+  .admin-header__session {
+    margin-left: 0;
+  }
+}

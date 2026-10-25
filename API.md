@@ -648,6 +648,56 @@ Response:
 
 ---
 
+## Web App Access & Admin Dashboard
+
+Only registered while `ANIWORLD_ENABLE_WEBAPP=1` (default). Approvals happen
+in the server terminal: `aniworld --web-requests` lists every request with its
+ID, type (`webapp`/`admin`) and confirmation code, `--web-approve <id>`,
+`--web-deny <id>` and `--web-revoke <id>` decide them.
+
+### Request web app access *(public)*
+```
+POST /api/webapp/request-access
+GET  /api/webapp/request-access/<device_id>
+```
+The POST returns `{ "device_id", "status": "pending", "code" }`; poll the GET
+until `status` is `approved` (then it carries a normal bearer `token`),
+`denied` or `revoked`.
+
+---
+
+### Request admin dashboard access *(web app bearer token required)*
+```
+POST /api/webapp/admin-access
+GET  /api/webapp/admin-access/<device_id>
+```
+Same flow, but the approval must be given for the request of type `admin` in
+the terminal — it can't be approved from the dashboard. The first poll after
+approval returns `{ "status": "approved", "token", "expires_at" }`; the token
+is handed out only once (later polls say `"used"`) and expires after 12 hours.
+
+---
+
+### Admin API *(header `X-Admin-Token: <admin token>`)*
+
+All `/api/admin/*` routes answer `401` without a live admin token (with
+`--web-auth` they additionally need the normal bearer token).
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/admin/session` | `{ id, expires_at, ip_address }` of the current admin session |
+| `POST /api/admin/logout` | Revoke the current admin session |
+| `GET /api/admin/access-requests` | `{ requests: [...], current_session_id }`, all types, newest first |
+| `POST /api/admin/access-requests/<id>/approve` | Approve a pending `webapp` request (`403` for `admin` requests) |
+| `POST /api/admin/access-requests/<id>/deny` | Deny a pending request |
+| `POST /api/admin/access-requests/<id>/revoke` | Revoke an approved request |
+| `GET /api/admin/profiles` | Profiles with `entries`, `completed`, `last_watched` |
+| `GET /api/admin/history?profile_id=&q=&limit=&offset=` | `{ entries: [...], total }` — watch progress rows, newest first |
+| `DELETE /api/admin/history/<entry_id>` | Forget one watched episode (the profile hasn't seen it anymore) |
+| `DELETE /api/admin/history?profile_id=&series_url=` | Forget a whole series for one profile |
+
+---
+
 ## Statistics
 
 ### Sync statistics

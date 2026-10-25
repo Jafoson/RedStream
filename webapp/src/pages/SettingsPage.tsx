@@ -3,6 +3,7 @@
 // sections from app/lib/screens/settings_screen.dart don't apply here: this
 // app is always same-origin and has no self-update mechanism.
 import { useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getStorageStats } from '../api/library'
 import { useAuth } from '../context/AuthContext'
@@ -37,22 +38,25 @@ function tvModeLabel(): string {
 
 export function SettingsPage() {
   const { logout } = useAuth()
+  const navigate = useNavigate()
   const { focus, setFocus } = useFocusEngine()
   const scrollerRef = useRef<HTMLDivElement>(null)
   const { data } = useQuery({ queryKey: ['storage-stats'], queryFn: getStorageStats })
   const isTv = useIsTv()
 
   useRegisterNav(
-    [2],
+    [1, 1, 1],
     (row) => {
       if (row === 0) cycleTvOverride()
       else if (row === 1) logout()
+      else if (row === 2) navigate('/verwaltung')
     },
     [],
   )
   useAutoScrollRow(scrollerRef)
   const tvToggleFocused = focus.region === 'content' && focus.row === 0
   const revokeFocused = focus.region === 'content' && focus.row === 1
+  const adminFocused = focus.region === 'content' && focus.row === 2
 
   return (
     <div className="scroller" ref={scrollerRef}>
@@ -117,6 +121,30 @@ export function SettingsPage() {
           </p>
           <button type="button" className={'filter row-anchor' + (revokeFocused ? ' is-foc' : '')} data-row="1" onClick={logout}>
             Zugriff widerrufen
+          </button>
+        </div>
+      </section>
+
+      <section className="settings-block">
+        <div className="section-head">
+          <div className="section-title">
+            <span className="bar" />
+            Verwaltung
+          </div>
+        </div>
+        <div className="panel settings-section">
+          <p className="text-body-md settings-section__hint">
+            Geräte freigeben oder sperren und den Verlauf aller Profile ansehen. Braucht eine
+            zusätzliche Freigabe im Server-Terminal.
+          </p>
+          <button
+            type="button"
+            className={'filter row-anchor' + (adminFocused ? ' is-foc' : '')}
+            data-row="2"
+            onMouseEnter={(e) => setFocus({ region: 'content', row: 2, col: 0 }, e)}
+            onClick={() => navigate('/verwaltung')}
+          >
+            Admin-Bereich öffnen
           </button>
         </div>
       </section>

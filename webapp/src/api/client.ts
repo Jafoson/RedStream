@@ -58,6 +58,8 @@ interface RequestOptions {
   signal?: AbortSignal
   /** Skip the X-Profile-ID header (auth/webapp-access endpoints don't need it). */
   skipProfile?: boolean
+  /** Extra request headers (e.g. the admin dashboard's X-Admin-Token). */
+  headers?: Record<string, string>
 }
 
 export function authHeaders(extra?: Record<string, string>): Record<string, string> {
@@ -70,7 +72,7 @@ export function authHeaders(extra?: Record<string, string>): Record<string, stri
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, params, signal, skipProfile } = options
 
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = { ...options.headers }
   if (!skipProfile) {
     const profileId = getActiveProfileId()
     if (profileId !== null) headers['X-Profile-ID'] = String(profileId)

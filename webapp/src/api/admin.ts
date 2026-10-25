@@ -1,0 +1,136 @@
+// Admin dashboard — src/aniworld/web/admin_api.py (+ the admin-access gate in
+// webapp_auth.py). The admin token is separate from the normal bearer token:
+// it is only issued after a second approval in the server terminal, only
+// works for /api/admin/*, and expires server-side after a few hours.
+import { ApiError, apiFetch } from './client'
+
+const ADMIN_TOKEN_KEY = 'rstv_admin_token'
+const ADMIN_DEVICE_KEY = 'rstv_admin_device_id'
+
+export function getAdminToken(): string | null {
+  return localStorage.getItem(ADMIN_TOKEN_KEY)
+}
+
+export function setAdminToken(token: string | null): void {
+  if (token) localStorage.setItem(ADMIN_TOKEN_KEY, token)
+  else localStorage.removeItem(ADMIN_TOKEN_KEY)
+}
+
+export function getAdminDeviceId(): string | null {
+  return localStorage.getItem(ADMIN_DEVICE_KEY)
+}
+
+export function setAdminDeviceId(id: string | null): void {
+  if (id) localStorage.setItem(ADMIN_DEVICE_KEY, id)
+  else localStorage.removeItem(ADMIN_DEVICE_KEY)
+}
+
+export interface AdminAccessRequest {
+  device_id: string
+  status: 'pending'
+  code: string
+}
+
+export interface AdminAccessPoll {
+  status: 'pending' | 'approved' | 'denied' | 'revoked' | 'used'
+  token?: string
+  expires_at?: string
+}
+
+export function requestAdminAccess(): Promise<AdminAccessRequest> {
+  return apiFetch<AdminAccessRequest>('/api/webapp/admin-access', { method: 'POST', skipProfile: true })
+}
+
+export function pollAdminAccess(deviceId: string): Promise<AdminAccessPoll> {
+  return apiFetch<AdminAccessPoll>(`/api/webapp/admin-access/${encodeURIComponent(deviceId)}`, {
+    skipProfile: true,
+  })
+}
+
+/** Like apiFetch, but with the admin token; a 401 drops the stored token. */
+async function adminFetch<T>(
+  path: string,
+  options: { method?: 'GET' | 'POST' | 'DELETE'; params?: Record<string, string | number | undefined> } = {},
+): Promise<T> {
+  try {
+    return await apiFetch<T>(path, {
+      ...options,
+      skipProfile: true,
+      headers: { 'X-Admin-Token': getAdminToken() ?? '' },
+    })
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) setAdminToken(null)
+    throw err
+  }
+}
+
+export interface AdminSession {
+  id: number
+  expires_at: string
+  ip_address: string | null
+}
+
+export type AccessKind = 'webapp' | 'admin'
+export type AccessStatus = 'pending' | 'approved' | 'denied' | 'revoked' | 'expired'
+
+export interface AccessRequestRow {
+  id: number
+  kind: AccessKind
+  code: string | null
+  status: AccessStatus
+  ip_address: string | null
+  user_agent: string | null
+  requested_at: string
+  decided_at: string | null
+  expires_at: string | null
+}
+
+export interface AdminProfile {
+  id: number
+  name: string
+  avatar_color: string
+  entries: number
+  completed: number
+  last_watched: string | null
+}
+
+export interface HistoryEntry {
+  id: number
+  profile_id: number
+  profile_name: string | null
+  profile_color: string | null
+  episode_url: string
+  series_title: string | null
+  series_url: string | null
+  season: number
+  episode_number: number
+  episode_title: string | null
+  position_seconds: number
+  duration_seconds: number
+  completed: number
+  updated_at: string
+}
+
+export const getAdminSession = () => adminFetch<AdminSession>('/api/admin/session')
+
+export const adminLogout = () => adminFetch<{ ok: true }>('/api/admin/logout', { method: 'POST' })
+
+export const listAccessRequests = () =>
+  adminFetch<{ requests: AccessRequestRow[]; current_session_id: number }>('/api/admin/access-requests')
+
+export const decideAccessRequest = (id: number, action: 'approve' | 'deny' | 'revoke') =>
+  adminFetch<{ ok: true }>(`/api/admin/access-requests/${id}/${action}`, { method: 'POST' })
+
+export const listAdminProfiles = () => adminFetch<{ profiles: AdminProfile[] }>('/api/admin/profiles')
+
+export const getWatchHistory = (params: { profile_id?: number; q?: string; limit: number; offset: number }) =>
+  adminFetch<{ entries: HistoryEntry[]; total: number }>('/api/admin/history', { params })
+
+export const deleteHistoryEntry = (id: number) =>
+  adminFetch<{ ok: true }>(`/api/admin/history/${id}`, { method: 'DELETE' })
+
+export const deleteSeriesHistory = (profileId: number, seriesUrl: string) =>
+  adminFetch<{ ok: true; deleted: number }>('/api/admin/history', {
+    method: 'DELETE',
+    params: { profile_id: profileId, series_url: seriesUrl },
+  })

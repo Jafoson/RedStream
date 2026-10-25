@@ -563,9 +563,11 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
     # via env.
     webapp_enabled = os.environ.get("ANIWORLD_ENABLE_WEBAPP", "1") == "1"
     if webapp_enabled:
+        from .admin_api import admin_bp
         from .webapp_auth import webapp_bp
 
         app.register_blueprint(webapp_bp)
+        app.register_blueprint(admin_bp)
 
     base_url = os.environ.get("ANIWORLD_WEB_BASE_URL", "").strip().rstrip("/")
     if base_url:
@@ -611,6 +613,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         csrf.init_app(app)
         if webapp_enabled:
             csrf.exempt(webapp_bp)
+            csrf.exempt(admin_bp)
 
         if sso_enabled:
             init_oidc(app, force_sso=force_sso)
