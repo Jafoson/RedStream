@@ -63,8 +63,6 @@ export function Sidebar({ active, onSelect, onProfileSwitch }: SidebarProps) {
       </div>
       <div className="nav-group-label">{expanded && 'MENÜ'}</div>
       <div className="navlist">{renderGroup('menu')}</div>
-      <div className="nav-group-label">{expanded && 'BIBLIOTHEK'}</div>
-      <div className="navlist">{renderGroup('library')}</div>
       <div className="sidebar-spacer" />
       <div className="navlist">{renderGroup('general')}</div>
       <div className="navlist">{renderGroup('profile')}</div>

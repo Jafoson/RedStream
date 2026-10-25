@@ -2103,6 +2103,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
 
         if deleted == 0:
             return jsonify({"error": "Nothing found to delete"}), 404
+        # The freed space should show up right away, not after the 5-minute
+        # storage-stats cache runs out.
+        _storage_cache.clear()
         return jsonify({"ok": True, "deleted": deleted})
 
     # ── Streaming endpoints ───────────────────────────────────────────────────

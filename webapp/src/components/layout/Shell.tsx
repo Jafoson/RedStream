@@ -8,8 +8,6 @@ import { useAuth } from '../../context/AuthContext'
 import { HomePage } from '../../pages/HomePage'
 import { GridPage } from '../../pages/GridPage'
 import { SearchPage } from '../../pages/SearchPage'
-import { QueuePage } from '../../pages/QueuePage'
-import { LibraryPage } from '../../pages/LibraryPage'
 import { WatchlistPage } from '../../pages/WatchlistPage'
 import { SettingsPage } from '../../pages/SettingsPage'
 import './Shell.css'
@@ -63,8 +61,6 @@ export function Shell() {
           {tab === 'grid-anime' && <GridPage kind="anime" />}
           {tab === 'grid-filme' && <GridPage kind="movies" />}
           {tab === 'search' && <SearchPage />}
-          {tab === 'queue' && <QueuePage />}
-          {tab === 'library' && <LibraryPage />}
           {tab === 'watchlist' && <WatchlistPage />}
           {tab === 'settings' && <SettingsPage />}
         </div>

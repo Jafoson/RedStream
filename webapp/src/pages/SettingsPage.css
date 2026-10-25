@@ -13,3 +13,8 @@
 .settings-section__hint {
   margin: 0;
 }
+
+.storage-banner__row {
+  display: flex;
+  justify-content: space-between;
+}

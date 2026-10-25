@@ -35,24 +35,13 @@ import {
 import { ApiError } from '../api/client'
 import { useBackHandler, useRegisterNav } from '../tv/FocusEngine'
 import { Icon } from '../components/layout/icons'
+import { errorText, formatTime } from './admin/format'
+import { DownloadsTab } from './admin/DownloadsTab'
+import { LibraryTab } from './admin/LibraryTab'
 import './AdminPage.css'
 
 const POLL_INTERVAL_MS = 3000
 const HISTORY_PAGE = 50
-
-// SQLite's datetime('now') is UTC without a zone marker.
-function parseUtc(value: string | null | undefined): Date | null {
-  if (!value) return null
-  const d = new Date(value.replace(' ', 'T') + 'Z')
-  return Number.isNaN(d.getTime()) ? null : d
-}
-
-function formatTime(value: string | null | undefined): string {
-  const d = parseUtc(value)
-  return d
-    ? d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-    : '—'
-}
 
 function formatDuration(seconds: number): string {
   const s = Math.max(0, Math.round(seconds))
@@ -62,9 +51,6 @@ function formatDuration(seconds: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`
 }
 
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : 'Unbekannter Fehler'
-}
 
 // ── Gate ────────────────────────────────────────────────────────────────────
 
@@ -677,7 +663,14 @@ function HistoryTab({ onLocked }: { onLocked: () => void }) {
 
 // ── Page ────────────────────────────────────────────────────────────────────
 
-type Tab = 'access' | 'history'
+type Tab = 'access' | 'downloads' | 'library' | 'history'
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'access', label: 'Zugriffe' },
+  { id: 'downloads', label: 'Downloads' },
+  { id: 'library', label: 'Bibliothek' },
+  { id: 'history', label: 'Verlauf' },
+]
 
 export function AdminPage() {
   const navigate = useNavigate()
@@ -739,15 +732,17 @@ export function AdminPage() {
       ) : (
         <>
           <div className="filters admin-tabs">
-            <button type="button" className={'filter' + (tab === 'access' ? ' on' : '')} onClick={() => setTab('access')}>
-              Zugriffe
-            </button>
-            <button type="button" className={'filter' + (tab === 'history' ? ' on' : '')} onClick={() => setTab('history')}>
-              Verlauf
-            </button>
+            {TABS.map((t) => (
+              <button key={t.id} type="button" className={'filter' + (tab === t.id ? ' on' : '')} onClick={() => setTab(t.id)}>
+                {t.label}
+              </button>
+            ))}
           </div>
           <div className="admin-content">
-            {tab === 'access' ? <AccessTab onLocked={onLocked} /> : <HistoryTab onLocked={onLocked} />}
+            {tab === 'access' && <AccessTab onLocked={onLocked} />}
+            {tab === 'downloads' && <DownloadsTab />}
+            {tab === 'library' && <LibraryTab />}
+            {tab === 'history' && <HistoryTab onLocked={onLocked} />}
           </div>
         </>
       )}

@@ -9,8 +9,6 @@ export type NavTab =
   | 'grid-anime'
   | 'grid-filme'
   | 'search'
-  | 'queue'
-  | 'library'
   | 'watchlist'
   | 'settings'
 
@@ -23,8 +21,6 @@ export function isNavTab(value: string | null): value is NavTab {
     value === 'grid-anime' ||
     value === 'grid-filme' ||
     value === 'search' ||
-    value === 'queue' ||
-    value === 'library' ||
     value === 'watchlist' ||
     value === 'settings'
   )
@@ -32,12 +28,14 @@ export function isNavTab(value: string | null): value is NavTab {
 
 // Flat sidebar row order — index in this array IS the FocusEngine sidebar
 // row number. Ported from the Claude Design project's components.jsx
-// NAV_ALL grouping (MENÜ / BIBLIOTHEK / Einstellungen / Profil wechseln).
+// NAV_ALL grouping (MENÜ / Einstellungen / Profil wechseln). Downloads and
+// Bibliothek used to be a BIBLIOTHEK group here; they now live in the admin
+// dashboard (/verwaltung, pages/AdminPage.tsx) instead.
 export interface SidebarItem {
   tab: NavTab | 'profile-switch'
   label: string
   icon: string
-  group: 'menu' | 'library' | 'general' | 'profile'
+  group: 'menu' | 'general' | 'profile'
 }
 
 export const SIDEBAR_ITEMS: SidebarItem[] = [
@@ -47,8 +45,6 @@ export const SIDEBAR_ITEMS: SidebarItem[] = [
   { tab: 'grid-filme', label: 'Filme', icon: 'film', group: 'menu' },
   { tab: 'grid-anime', label: 'Anime', icon: 'anime', group: 'menu' },
   { tab: 'search', label: 'Suche', icon: 'search', group: 'menu' },
-  { tab: 'queue', label: 'Downloads', icon: 'download', group: 'library' },
-  { tab: 'library', label: 'Bibliothek', icon: 'library', group: 'library' },
   { tab: 'settings', label: 'Einstellungen', icon: 'settings', group: 'general' },
   { tab: 'profile-switch', label: 'Profil wechseln', icon: 'swap', group: 'profile' },
 ]
