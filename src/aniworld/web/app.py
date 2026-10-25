@@ -2863,6 +2863,8 @@ def start_web_ui(
     else:
         from waitress import serve
 
+        _install_shutdown_handlers()
+
         # Waitress defaults to a 4-thread pool, which starves fast under this
         # app's actual load pattern: a single Home page load fires dozens of
         # concurrent /api/proxy-image requests plus ~8 data API calls, and
@@ -2872,6 +2874,30 @@ def start_web_ui(
         # real, user-visible source of the web UI feeling much slower than
         # the native app (which has no such shared bottleneck per client).
         serve(app, host=host, port=port, threads=16, **_proxy_options())
+
+
+def _install_shutdown_handlers():
+    """Stop cleanly on SIGTERM (container stop/deploy) and SIGINT (Ctrl+C).
+
+    In the Docker image aniworld runs as PID 1, and PID 1 ignores SIGTERM
+    unless it installs a handler — so every deploy used to end in a SIGKILL
+    after the grace period. That looked exactly like a crash to the
+    download queue (reset_stale_running), and after two deploys during one
+    download it was given up as "interrupted repeatedly".
+    """
+    import signal
+
+    def _handle(signum, _frame):
+        requeued = download_worker.shutdown()
+        for qid, title in requeued:
+            print(f"Paused download #{qid} '{title}' for shutdown - it resumes on the next start", flush=True)
+        print(f"Received {signal.Signals(signum).name}, shutting down", flush=True)
+        # Hard exit: waitress' serve() and the daemon worker threads have no
+        # state left to flush (SQLite commits per statement).
+        os._exit(0)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, _handle)
 
 
 def _proxy_options():

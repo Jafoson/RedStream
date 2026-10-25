@@ -220,6 +220,16 @@ def check_downloaded(episode_path):
     if not any(m3u8_path.parent.glob(f"{m3u8_path.stem}_*.ts")):
         return result
 
+    # FFmpeg only writes #EXT-X-ENDLIST when it finishes the episode. A
+    # playlist without it is what a killed download (crash, restart, deploy)
+    # leaves behind — counting that as downloaded would skip the rest of the
+    # episode for good. The new download simply overwrites it.
+    try:
+        if "#EXT-X-ENDLIST" not in m3u8_path.read_text(encoding="utf-8", errors="ignore"):
+            return result
+    except OSError:
+        return result
+
     result["exists"] = True
     return result
 
@@ -497,6 +507,18 @@ def get_ffmpeg_progress(queue_id=None):
             for k, v in _ffmpeg_progress_by_item.items()
             if k is not None
         }
+
+
+def kill_all_active_ffmpeg():
+    """Kill every running FFmpeg process (used on server shutdown)."""
+    with _active_ffmpeg_procs_lock:
+        procs = list(_active_ffmpeg_procs.values())
+    for proc in procs:
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 def kill_active_ffmpeg(thread_id: Optional[int] = None):

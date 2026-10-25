@@ -49,7 +49,11 @@ export function pollAdminAccess(deviceId: string): Promise<AdminAccessPoll> {
 /** Like apiFetch, but with the admin token; a 401 drops the stored token. */
 async function adminFetch<T>(
   path: string,
-  options: { method?: 'GET' | 'POST' | 'DELETE'; params?: Record<string, string | number | undefined> } = {},
+  options: {
+    method?: 'GET' | 'POST' | 'DELETE'
+    params?: Record<string, string | number | undefined>
+    body?: unknown
+  } = {},
 ): Promise<T> {
   try {
     return await apiFetch<T>(path, {
@@ -116,13 +120,58 @@ export const adminLogout = () => adminFetch<{ ok: true }>('/api/admin/logout', {
 export const listAccessRequests = () =>
   adminFetch<{ requests: AccessRequestRow[]; current_session_id: number }>('/api/admin/access-requests')
 
-export const decideAccessRequest = (id: number, action: 'approve' | 'deny' | 'revoke') =>
+export type AccessAction = 'approve' | 'deny' | 'revoke'
+
+export const decideAccessRequest = (id: number, action: AccessAction) =>
   adminFetch<{ ok: true }>(`/api/admin/access-requests/${id}/${action}`, { method: 'POST' })
+
+export interface BulkResult {
+  done: number[]
+  failed: { id: number; error: string }[]
+}
+
+export const bulkDecideAccessRequests = (ids: number[], action: AccessAction) =>
+  adminFetch<BulkResult>('/api/admin/access-requests/bulk', { method: 'POST', body: { ids, action } })
 
 export const listAdminProfiles = () => adminFetch<{ profiles: AdminProfile[] }>('/api/admin/profiles')
 
-export const getWatchHistory = (params: { profile_id?: number; q?: string; limit: number; offset: number }) =>
-  adminFetch<{ entries: HistoryEntry[]; total: number }>('/api/admin/history', { params })
+export type EpisodeSort = 'recent' | 'oldest' | 'episode' | 'episode_desc' | 'title'
+export type SeriesSort = 'recent' | 'title' | 'latest_episode' | 'episodes'
+
+export const getWatchHistory = (params: {
+  profile_id?: number
+  q?: string
+  series_url?: string
+  sort?: EpisodeSort
+  limit: number
+  offset: number
+}) => adminFetch<{ entries: HistoryEntry[]; total: number }>('/api/admin/history', { params })
+
+export interface HistorySeries {
+  profile_id: number
+  profile_name: string | null
+  profile_color: string | null
+  series_key: string
+  series_url: string | null
+  series_title: string | null
+  episodes: number
+  completed: number
+  latest_season: number
+  latest_episode: number
+  last_season?: number
+  last_episode?: number
+  last_episode_title?: string | null
+  last_completed?: number
+  last_watched: string
+}
+
+export const getWatchHistorySeries = (params: {
+  profile_id?: number
+  q?: string
+  sort?: SeriesSort
+  limit: number
+  offset: number
+}) => adminFetch<{ series: HistorySeries[]; total: number }>('/api/admin/history/series', { params })
 
 export const deleteHistoryEntry = (id: number) =>
   adminFetch<{ ok: true }>(`/api/admin/history/${id}`, { method: 'DELETE' })

@@ -10,16 +10,21 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  type AccessAction,
   type AccessRequestRow,
+  type EpisodeSort,
   type HistoryEntry,
+  type HistorySeries,
+  type SeriesSort,
   adminLogout,
-  decideAccessRequest,
+  bulkDecideAccessRequests,
   deleteHistoryEntry,
   deleteSeriesHistory,
   getAdminDeviceId,
   getAdminSession,
   getAdminToken,
   getWatchHistory,
+  getWatchHistorySeries,
   listAccessRequests,
   listAdminProfiles,
   pollAdminAccess,
@@ -205,6 +210,12 @@ const STATUS_LABEL: Record<string, string> = {
   revoked: 'Widerrufen',
 }
 
+const ACTION_DONE: Record<AccessAction, string> = {
+  approve: 'freigegeben',
+  deny: 'abgelehnt',
+  revoke: 'widerrufen',
+}
+
 function shortAgent(ua: string | null): string {
   if (!ua) return 'Unbekanntes Gerät'
   const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : null
@@ -212,10 +223,18 @@ function shortAgent(ua: string | null): string {
   return [browser, os].filter(Boolean).join(' · ') || ua.slice(0, 40)
 }
 
+/** Which actions make sense for a row — the same rules the server enforces. */
+function canDo(row: AccessRequestRow, action: AccessAction): boolean {
+  if (action === 'approve') return row.status === 'pending' && row.kind === 'webapp'
+  if (action === 'deny') return row.status === 'pending'
+  return row.status === 'approved'
+}
+
 function AccessTab({ onLocked }: { onLocked: () => void }) {
   const queryClient = useQueryClient()
-  const [busy, setBusy] = useState<number | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
   const { data, error } = useQuery({
     queryKey: ['admin', 'access-requests'],
     queryFn: listAccessRequests,
@@ -226,98 +245,197 @@ function AccessTab({ onLocked }: { onLocked: () => void }) {
     if (error instanceof ApiError && error.status === 401) onLocked()
   }, [error, onLocked])
 
-  const act = async (row: AccessRequestRow, action: 'approve' | 'deny' | 'revoke') => {
-    if (action === 'revoke' && row.id === data?.current_session_id) {
-      if (!window.confirm('Das ist deine aktuelle Admin-Sitzung. Wirklich widerrufen?')) return
+  const rows = data?.requests ?? []
+  const currentId = data?.current_session_id
+
+  // Drop selections whose row disappeared or can no longer be acted on
+  // (e.g. decided in the terminal meanwhile) on every poll.
+  useEffect(() => {
+    setSelected((prev) => {
+      const actionable = new Set(rows.filter((r) => r.status === 'pending' || r.status === 'approved').map((r) => r.id))
+      const next = new Set([...prev].filter((id) => actionable.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [rows])
+
+  const toggle = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const selectAll = (ids: number[]) =>
+    setSelected((prev) => {
+      const allIn = ids.every((id) => prev.has(id))
+      const next = new Set(prev)
+      ids.forEach((id) => (allIn ? next.delete(id) : next.add(id)))
+      return next
+    })
+
+  const run = async (targets: AccessRequestRow[], action: AccessAction) => {
+    const applicable = targets.filter((r) => canDo(r, action))
+    if (!applicable.length) return
+    const hitsSelf = action === 'revoke' && applicable.some((r) => r.id === currentId)
+    if (hitsSelf && !window.confirm('Darunter ist deine aktuelle Admin-Sitzung. Wirklich widerrufen?')) return
+    if (applicable.length > 1 && !hitsSelf && action !== 'approve') {
+      if (!window.confirm(`${applicable.length} Einträge ${ACTION_DONE[action]}?`)) return
     }
-    setBusy(row.id)
+    setBusy(true)
     setMessage(null)
     try {
-      await decideAccessRequest(row.id, action)
-      if (action === 'revoke' && row.id === data?.current_session_id) {
+      const result = await bulkDecideAccessRequests(applicable.map((r) => r.id), action)
+      const skipped = targets.length - applicable.length
+      const parts = [`${result.done.length} ${ACTION_DONE[action]}`]
+      if (skipped) parts.push(`${skipped} übersprungen (passt nicht zum Status)`)
+      if (result.failed.length) parts.push(`${result.failed.length} fehlgeschlagen: ${result.failed.map((f) => `#${f.id} ${f.error}`).join('; ')}`)
+      setMessage({ text: parts.join(' · '), error: result.failed.length > 0 })
+      setSelected(new Set())
+      if (hitsSelf && result.done.includes(currentId as number)) {
         onLocked()
         return
       }
       await queryClient.invalidateQueries({ queryKey: ['admin', 'access-requests'] })
     } catch (err) {
-      setMessage(errorText(err))
+      setMessage({ text: errorText(err), error: true })
     } finally {
-      setBusy(null)
+      setBusy(false)
     }
   }
 
-  const rows = data?.requests ?? []
   const pending = rows.filter((r) => r.status === 'pending')
   const others = rows.filter((r) => r.status !== 'pending')
+  const selectedRows = rows.filter((r) => selected.has(r.id))
+  const count = (action: AccessAction) => selectedRows.filter((r) => canDo(r, action)).length
 
-  const renderRow = (row: AccessRequestRow) => (
-    <div key={row.id} className={'admin-row' + (row.status === 'pending' ? ' admin-row--pending' : '')}>
-      <div className="admin-row__main">
-        <div className="admin-row__title">
-          <span className={'admin-badge admin-badge--' + row.kind}>{row.kind === 'admin' ? 'Admin' : 'Web-App'}</span>
-          <span className="admin-row__id">#{row.id}</span>
-          {row.code && <span className="admin-row__code">{row.code}</span>}
-          <span className={'admin-status admin-status--' + row.status}>{STATUS_LABEL[row.status] ?? row.status}</span>
-          {row.id === data?.current_session_id && <span className="admin-status admin-status--self">Diese Sitzung</span>}
+  const renderRow = (row: AccessRequestRow) => {
+    const actionable = row.status === 'pending' || row.status === 'approved'
+    return (
+      <div
+        key={row.id}
+        className={'admin-row' + (row.status === 'pending' ? ' admin-row--pending' : '') + (selected.has(row.id) ? ' admin-row--selected' : '')}
+      >
+        <label className={'admin-check' + (actionable ? '' : ' admin-check--off')}>
+          <input type="checkbox" disabled={!actionable} checked={selected.has(row.id)} onChange={() => toggle(row.id)} />
+        </label>
+        <div className="admin-row__main">
+          <div className="admin-row__title">
+            <span className={'admin-badge admin-badge--' + row.kind}>{row.kind === 'admin' ? 'Admin' : 'Web-App'}</span>
+            <span className="admin-row__id">#{row.id}</span>
+            {row.code && <span className="admin-row__code">{row.code}</span>}
+            <span className={'admin-status admin-status--' + row.status}>{STATUS_LABEL[row.status] ?? row.status}</span>
+            {row.id === currentId && <span className="admin-status admin-status--self">Diese Sitzung</span>}
+          </div>
+          <div className="admin-row__meta" title={row.user_agent ?? ''}>
+            {shortAgent(row.user_agent)} · {row.ip_address || 'IP unbekannt'} · angefragt {formatTime(row.requested_at)}
+            {row.status === 'approved' && row.decided_at && <> · freigegeben {formatTime(row.decided_at)}</>}
+          </div>
         </div>
-        <div className="admin-row__meta" title={row.user_agent ?? ''}>
-          {shortAgent(row.user_agent)} · {row.ip_address || 'IP unbekannt'} · angefragt {formatTime(row.requested_at)}
-          {row.status === 'approved' && row.decided_at && <> · freigegeben {formatTime(row.decided_at)}</>}
+        <div className="admin-row__actions">
+          {canDo(row, 'approve') && (
+            <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => run([row], 'approve')}>
+              Freigeben
+            </button>
+          )}
+          {row.status === 'pending' && row.kind === 'admin' && (
+            <span className="admin-hint">Freigabe nur im Terminal: <code>aniworld --web-approve {row.id}</code></span>
+          )}
+          {canDo(row, 'deny') && (
+            <button type="button" className="filter btn-sm" disabled={busy} onClick={() => run([row], 'deny')}>
+              Ablehnen
+            </button>
+          )}
+          {canDo(row, 'revoke') && (
+            <button type="button" className="filter btn-sm admin-danger" disabled={busy} onClick={() => run([row], 'revoke')}>
+              Widerrufen
+            </button>
+          )}
         </div>
       </div>
-      <div className="admin-row__actions">
-        {row.status === 'pending' && row.kind === 'webapp' && (
-          <button type="button" className="btn btn-primary btn-sm" disabled={busy === row.id} onClick={() => act(row, 'approve')}>
-            Freigeben
-          </button>
-        )}
-        {row.status === 'pending' && row.kind === 'admin' && (
-          <span className="admin-hint">Freigabe nur im Terminal: <code>aniworld --web-approve {row.id}</code></span>
-        )}
-        {row.status === 'pending' && (
-          <button type="button" className="filter btn-sm" disabled={busy === row.id} onClick={() => act(row, 'deny')}>
-            Ablehnen
-          </button>
-        )}
-        {row.status === 'approved' && (
-          <button type="button" className="filter btn-sm admin-danger" disabled={busy === row.id} onClick={() => act(row, 'revoke')}>
-            Widerrufen
-          </button>
-        )}
-      </div>
-    </div>
-  )
+    )
+  }
+
+  const section = (title: string, list: AccessRequestRow[], empty: string) => {
+    const ids = list.filter((r) => r.status === 'pending' || r.status === 'approved').map((r) => r.id)
+    const allIn = ids.length > 0 && ids.every((id) => selected.has(id))
+    return (
+      <>
+        <div className="section-head">
+          <div className="section-title">
+            <span className="bar" />
+            {title}
+          </div>
+          {ids.length > 0 && (
+            <button type="button" className="filter btn-sm" onClick={() => selectAll(ids)}>
+              {allIn ? 'Auswahl aufheben' : 'Alle auswählen'}
+            </button>
+          )}
+        </div>
+        <div className="admin-list">{list.length ? list.map(renderRow) : <div className="admin-empty">{empty}</div>}</div>
+      </>
+    )
+  }
 
   return (
     <>
-      {message && <div className="admin-message">{message}</div>}
-      <div className="section-head">
-        <div className="section-title">
-          <span className="bar" />
-          Offene Anfragen ({pending.length})
+      {message && <div className={'admin-message' + (message.error ? '' : ' admin-message--ok')}>{message.text}</div>}
+      {selected.size > 0 && (
+        <div className="admin-bulkbar">
+          <span className="admin-bulkbar__count">{selected.size} ausgewählt</span>
+          <button type="button" className="btn btn-primary btn-sm" disabled={busy || !count('approve')} onClick={() => run(selectedRows, 'approve')}>
+            Freigeben ({count('approve')})
+          </button>
+          <button type="button" className="filter btn-sm" disabled={busy || !count('deny')} onClick={() => run(selectedRows, 'deny')}>
+            Ablehnen ({count('deny')})
+          </button>
+          <button type="button" className="filter btn-sm admin-danger" disabled={busy || !count('revoke')} onClick={() => run(selectedRows, 'revoke')}>
+            Widerrufen ({count('revoke')})
+          </button>
+          <button type="button" className="filter btn-sm" disabled={busy} onClick={() => setSelected(new Set())}>
+            Auswahl aufheben
+          </button>
+          {selectedRows.some((r) => r.status === 'pending' && r.kind === 'admin') && (
+            <span className="admin-hint">Admin-Anfragen werden beim Freigeben übersprungen – die gehen nur im Terminal.</span>
+          )}
         </div>
-      </div>
-      <div className="admin-list">
-        {pending.length ? pending.map(renderRow) : <div className="admin-empty">Keine offenen Anfragen.</div>}
-      </div>
-      <div className="section-head">
-        <div className="section-title">
-          <span className="bar" />
-          Alle Geräte
-        </div>
-      </div>
-      <div className="admin-list">
-        {others.length ? others.map(renderRow) : <div className="admin-empty">Noch keine Geräte.</div>}
-      </div>
+      )}
+      {section(`Offene Anfragen (${pending.length})`, pending, 'Keine offenen Anfragen.')}
+      {section('Alle Geräte', others, 'Noch keine Geräte.')}
     </>
   )
 }
 
 // ── Watch history tab ───────────────────────────────────────────────────────
 
+type HistoryView = 'series' | 'episodes'
+
+const SERIES_SORTS: { value: SeriesSort; label: string }[] = [
+  { value: 'recent', label: 'Zuletzt geschaut' },
+  { value: 'latest_episode', label: 'Neueste Folge' },
+  { value: 'title', label: 'Name A–Z' },
+  { value: 'episodes', label: 'Meiste Folgen' },
+]
+
+const EPISODE_SORTS: { value: EpisodeSort; label: string }[] = [
+  { value: 'recent', label: 'Zuletzt geschaut' },
+  { value: 'oldest', label: 'Zuerst geschaut' },
+  { value: 'episode_desc', label: 'Neueste Folge zuerst' },
+  { value: 'episode', label: 'Folgen-Reihenfolge' },
+  { value: 'title', label: 'Serie A–Z' },
+]
+
+function epLabel(season: number | undefined, episode: number | undefined): string {
+  return `S${String(season ?? 0).padStart(2, '0')}E${String(episode ?? 0).padStart(2, '0')}`
+}
+
 function HistoryTab({ onLocked }: { onLocked: () => void }) {
   const queryClient = useQueryClient()
+  const [view, setView] = useState<HistoryView>('series')
   const [profileId, setProfileId] = useState<number | undefined>(undefined)
+  const [seriesFilter, setSeriesFilter] = useState<{ url: string; title: string } | null>(null)
+  const [seriesSort, setSeriesSort] = useState<SeriesSort>('recent')
+  const [episodeSort, setEpisodeSort] = useState<EpisodeSort>('recent')
   const [search, setSearch] = useState('')
   const [debounced, setDebounced] = useState('')
   const [limit, setLimit] = useState(HISTORY_PAGE)
@@ -328,24 +446,47 @@ function HistoryTab({ onLocked }: { onLocked: () => void }) {
     return () => clearTimeout(t)
   }, [search])
 
-  useEffect(() => setLimit(HISTORY_PAGE), [profileId, debounced])
+  useEffect(() => setLimit(HISTORY_PAGE), [view, profileId, debounced, seriesFilter, seriesSort, episodeSort])
 
   const profiles = useQuery({ queryKey: ['admin', 'profiles'], queryFn: listAdminProfiles })
-  const history = useQuery({
-    queryKey: ['admin', 'history', profileId, debounced, limit],
-    queryFn: () => getWatchHistory({ profile_id: profileId, q: debounced || undefined, limit, offset: 0 }),
+  const seriesQuery = useQuery({
+    queryKey: ['admin', 'history-series', profileId, debounced, seriesSort, limit],
+    queryFn: () => getWatchHistorySeries({ profile_id: profileId, q: debounced || undefined, sort: seriesSort, limit, offset: 0 }),
     placeholderData: keepPreviousData,
+    enabled: view === 'series',
+  })
+  const episodesQuery = useQuery({
+    queryKey: ['admin', 'history', profileId, debounced, seriesFilter?.url, episodeSort, limit],
+    queryFn: () =>
+      getWatchHistory({
+        profile_id: profileId,
+        q: debounced || undefined,
+        series_url: seriesFilter?.url,
+        sort: episodeSort,
+        limit,
+        offset: 0,
+      }),
+    placeholderData: keepPreviousData,
+    enabled: view === 'episodes',
   })
 
   useEffect(() => {
-    const err = history.error ?? profiles.error
+    const err = seriesQuery.error ?? episodesQuery.error ?? profiles.error
     if (err instanceof ApiError && err.status === 401) onLocked()
-  }, [history.error, profiles.error, onLocked])
+  }, [seriesQuery.error, episodesQuery.error, profiles.error, onLocked])
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['admin'] })
 
+  const openSeries = (s: HistorySeries) => {
+    if (!s.series_url) return
+    setProfileId(s.profile_id)
+    setSeriesFilter({ url: s.series_url, title: s.series_title || s.series_url })
+    setEpisodeSort('episode')
+    setView('episodes')
+  }
+
   const removeEntry = async (entry: HistoryEntry) => {
-    const label = `${entry.series_title ?? 'Episode'} S${String(entry.season).padStart(2, '0')}E${String(entry.episode_number).padStart(2, '0')}`
+    const label = `${entry.series_title ?? 'Episode'} ${epLabel(entry.season, entry.episode_number)}`
     if (!window.confirm(`„${label}“ für ${entry.profile_name ?? 'dieses Profil'} als nicht gesehen markieren?`)) return
     setMessage(null)
     try {
@@ -356,20 +497,26 @@ function HistoryTab({ onLocked }: { onLocked: () => void }) {
     }
   }
 
-  const removeSeries = async (entry: HistoryEntry) => {
-    if (!entry.series_url) return
-    if (!window.confirm(`Den kompletten Verlauf von „${entry.series_title ?? 'dieser Serie'}“ für ${entry.profile_name ?? 'dieses Profil'} löschen?`)) return
+  const removeSeries = async (profile: number, profileName: string | null, seriesUrl: string | null, title: string | null) => {
+    if (!seriesUrl) return
+    if (!window.confirm(`Den kompletten Verlauf von „${title ?? 'dieser Serie'}“ für ${profileName ?? 'dieses Profil'} löschen?`)) return
     setMessage(null)
     try {
-      await deleteSeriesHistory(entry.profile_id, entry.series_url)
+      await deleteSeriesHistory(profile, seriesUrl)
+      if (seriesFilter?.url === seriesUrl) setSeriesFilter(null)
       await refresh()
     } catch (err) {
       setMessage(errorText(err))
     }
   }
 
-  const entries = history.data?.entries ?? []
-  const total = history.data?.total ?? 0
+  const series = seriesQuery.data?.series ?? []
+  const seriesTotal = seriesQuery.data?.total ?? 0
+  const entries = episodesQuery.data?.entries ?? []
+  const entriesTotal = episodesQuery.data?.total ?? 0
+  const shown = view === 'series' ? series.length : entries.length
+  const total = view === 'series' ? seriesTotal : entriesTotal
+  const loading = view === 'series' ? seriesQuery.isLoading : episodesQuery.isLoading
 
   return (
     <>
@@ -394,59 +541,134 @@ function HistoryTab({ onLocked }: { onLocked: () => void }) {
         ))}
       </div>
 
-      <input
-        className="text-input admin-search"
-        type="search"
-        placeholder="Serie oder Episode suchen…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
+      <div className="admin-toolbar">
+        <div className="admin-segment">
+          <button type="button" className={'filter btn-sm' + (view === 'series' ? ' on' : '')} onClick={() => setView('series')}>
+            Serien
+          </button>
+          <button type="button" className={'filter btn-sm' + (view === 'episodes' ? ' on' : '')} onClick={() => setView('episodes')}>
+            Episoden
+          </button>
+        </div>
+        <input
+          className="text-input admin-search"
+          type="search"
+          placeholder="Serie oder Episode suchen…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <label className="admin-sort">
+          <span>Sortieren</span>
+          {view === 'series' ? (
+            <select value={seriesSort} onChange={(e) => setSeriesSort(e.target.value as SeriesSort)}>
+              {SERIES_SORTS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          ) : (
+            <select value={episodeSort} onChange={(e) => setEpisodeSort(e.target.value as EpisodeSort)}>
+              {EPISODE_SORTS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          )}
+        </label>
+      </div>
+
+      {view === 'episodes' && seriesFilter && (
+        <div className="admin-filterchip-row">
+          <button type="button" className="filter btn-sm on" onClick={() => setSeriesFilter(null)} title="Serienfilter entfernen">
+            Serie: {seriesFilter.title} ✕
+          </button>
+        </div>
+      )}
 
       <div className="admin-list">
-        {entries.map((e) => {
-          const pct = e.duration_seconds > 0 ? Math.min(100, (e.position_seconds / e.duration_seconds) * 100) : 0
-          return (
-            <div key={e.id} className="admin-row">
-              <div className="admin-row__main">
-                <div className="admin-row__title">
-                  <span className="admin-profile__dot" style={{ background: e.profile_color ?? 'var(--muted-2)' }} />
-                  <span className="admin-row__profile">{e.profile_name ?? `Profil ${e.profile_id}`}</span>
-                  <span className="admin-row__series">{e.series_title || e.episode_url}</span>
-                  <span className="admin-row__ep">
-                    S{String(e.season).padStart(2, '0')}E{String(e.episode_number).padStart(2, '0')}
-                  </span>
-                  {e.completed ? (
-                    <span className="admin-status admin-status--approved">Gesehen</span>
-                  ) : (
-                    <span className="admin-status admin-status--pending">{Math.round(pct)} %</span>
+        {view === 'series' &&
+          series.map((s) => {
+            const pct = s.episodes ? Math.round((s.completed / s.episodes) * 100) : 0
+            return (
+              <div key={`${s.profile_id}:${s.series_key}`} className="admin-row">
+                <div className="admin-row__main">
+                  <div className="admin-row__title">
+                    <span className="admin-profile__dot" style={{ background: s.profile_color ?? 'var(--muted-2)' }} />
+                    <span className="admin-row__profile">{s.profile_name ?? `Profil ${s.profile_id}`}</span>
+                    <span className="admin-row__series">{s.series_title || s.series_key}</span>
+                    <span className="admin-status admin-status--approved">{s.completed} / {s.episodes} gesehen</span>
+                  </div>
+                  <div className="admin-progress">
+                    <div className="admin-progress__bar" style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="admin-row__meta">
+                    Neueste Folge {epLabel(s.latest_season, s.latest_episode)} · zuletzt geschaut{' '}
+                    {epLabel(s.last_season, s.last_episode)}
+                    {s.last_episode_title && <> „{s.last_episode_title}“</>} am {formatTime(s.last_watched)}
+                  </div>
+                </div>
+                <div className="admin-row__actions">
+                  {s.series_url && (
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => openSeries(s)}>
+                      Folgen anzeigen
+                    </button>
+                  )}
+                  {s.series_url && (
+                    <button
+                      type="button"
+                      className="filter btn-sm admin-danger"
+                      onClick={() => removeSeries(s.profile_id, s.profile_name, s.series_url, s.series_title)}
+                    >
+                      Serie zurücksetzen
+                    </button>
                   )}
                 </div>
-                {e.episode_title && <div className="admin-row__meta">{e.episode_title}</div>}
-                <div className="admin-progress">
-                  <div className="admin-progress__bar" style={{ width: `${e.completed ? 100 : pct}%` }} />
-                </div>
-                <div className="admin-row__meta">
-                  {formatDuration(e.position_seconds)} / {formatDuration(e.duration_seconds)} · {formatTime(e.updated_at)}
-                </div>
               </div>
-              <div className="admin-row__actions">
-                <button type="button" className="filter btn-sm admin-danger" onClick={() => removeEntry(e)}>
-                  Als ungesehen markieren
-                </button>
-                {e.series_url && (
-                  <button type="button" className="filter btn-sm" onClick={() => removeSeries(e)}>
-                    Ganze Serie zurücksetzen
+            )
+          })}
+
+        {view === 'episodes' &&
+          entries.map((e) => {
+            const pct = e.duration_seconds > 0 ? Math.min(100, (e.position_seconds / e.duration_seconds) * 100) : 0
+            return (
+              <div key={e.id} className="admin-row">
+                <div className="admin-row__main">
+                  <div className="admin-row__title">
+                    <span className="admin-profile__dot" style={{ background: e.profile_color ?? 'var(--muted-2)' }} />
+                    <span className="admin-row__profile">{e.profile_name ?? `Profil ${e.profile_id}`}</span>
+                    <span className="admin-row__series">{e.series_title || e.episode_url}</span>
+                    <span className="admin-row__ep">{epLabel(e.season, e.episode_number)}</span>
+                    {e.completed ? (
+                      <span className="admin-status admin-status--approved">Gesehen</span>
+                    ) : (
+                      <span className="admin-status admin-status--pending">{Math.round(pct)} %</span>
+                    )}
+                  </div>
+                  {e.episode_title && <div className="admin-row__meta">{e.episode_title}</div>}
+                  <div className="admin-progress">
+                    <div className="admin-progress__bar" style={{ width: `${e.completed ? 100 : pct}%` }} />
+                  </div>
+                  <div className="admin-row__meta">
+                    {formatDuration(e.position_seconds)} / {formatDuration(e.duration_seconds)} · {formatTime(e.updated_at)}
+                  </div>
+                </div>
+                <div className="admin-row__actions">
+                  <button type="button" className="filter btn-sm admin-danger" onClick={() => removeEntry(e)}>
+                    Als ungesehen markieren
                   </button>
-                )}
+                  {e.series_url && !seriesFilter && (
+                    <button type="button" className="filter btn-sm" onClick={() => removeSeries(e.profile_id, e.profile_name, e.series_url, e.series_title)}>
+                      Ganze Serie zurücksetzen
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          )
-        })}
-        {!history.isLoading && entries.length === 0 && <div className="admin-empty">Kein Verlauf gefunden.</div>}
+            )
+          })}
+
+        {!loading && shown === 0 && <div className="admin-empty">Kein Verlauf gefunden.</div>}
       </div>
-      {entries.length < total && (
+      {shown < total && (
         <button type="button" className="btn btn-ghost admin-more" onClick={() => setLimit((l) => l + HISTORY_PAGE)}>
-          Mehr laden ({entries.length} von {total})
+          Mehr laden ({shown} von {total})
         </button>
       )}
     </>

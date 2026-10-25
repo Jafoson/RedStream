@@ -41,7 +41,7 @@ def request_access_status(device_id):
     row = get_web_access_request(device_id)
     if not row:
         return jsonify({"error": "Unknown request"}), 404
-    payload = {"status": row["status"]}
+    payload = {"status": row["status"], "code": row["code"]}
     if row["status"] == "approved" and row["token"]:
         payload["token"] = row["token"]
     return jsonify(payload)

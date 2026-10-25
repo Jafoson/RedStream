@@ -18,6 +18,7 @@ type State = 'requesting' | 'pending' | 'denied' | 'error'
 export function WebAccessPage() {
   const { refresh } = useAuth()
   const [state, setState] = useState<State>('requesting')
+  const [code, setCode] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const deviceIdRef = useRef<string | null>(null)
   // Guards against React StrictMode's dev-only double-invoke of this effect,
@@ -39,6 +40,7 @@ export function WebAccessPage() {
     if (!deviceId) return
     try {
       const result = await pollAccess(deviceId)
+      if (result.code) setCode(result.code)
       if (result.status === 'approved' && result.token) {
         stopPolling()
         localStorage.removeItem(DEVICE_ID_KEY)
@@ -58,11 +60,13 @@ export function WebAccessPage() {
 
   const start = useCallback(async () => {
     setState('requesting')
+    setCode(null)
     let deviceId = localStorage.getItem(DEVICE_ID_KEY)
     if (!deviceId) {
       try {
         const result = await requestAccess()
         deviceId = result.device_id
+        setCode(result.code)
         localStorage.setItem(DEVICE_ID_KEY, deviceId)
       } catch {
         setState('error')
@@ -103,6 +107,12 @@ export function WebAccessPage() {
             <p className="text-body-lg web-access__text">
               Ein Administrator muss diesen Browser auf dem Server freigeben, bevor es weitergeht.
             </p>
+            {code && (
+              <>
+                <p className="text-body-md web-access__text">Bestätigungscode</p>
+                <div className="web-access__pin">{code}</div>
+              </>
+            )}
             <pre className="web-access__code">
               aniworld --web-requests{'\n'}aniworld --web-approve &lt;ID&gt;
             </pre>

@@ -344,6 +344,15 @@ def init_web_access_requests_db():
                 conn.execute(f"ALTER TABLE web_access_requests ADD COLUMN {column}")
             except Exception:
                 pass  # column already exists
+        # Requests made before codes existed get one now, so every row in
+        # --web-requests / the dashboard can be matched against a browser.
+        for row in conn.execute(
+            "SELECT id FROM web_access_requests WHERE code IS NULL"
+        ).fetchall():
+            conn.execute(
+                "UPDATE web_access_requests SET code = ? WHERE id = ?",
+                (_new_access_code(), row["id"]),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -969,6 +978,42 @@ def reset_stale_running():
         conn.execute("UPDATE download_queue SET captcha_url = NULL")
         conn.commit()
         return requeued, failed
+    finally:
+        conn.close()
+
+
+def requeue_running_for_shutdown():
+    """Put every running item back in the queue on a clean shutdown.
+
+    Unlike reset_stale_running() at the next start, this is a deliberate stop
+    (deploy, Ctrl+C), not a crash, so it does not count towards
+    MAX_CRASH_RESETS — it even clears an earlier count. Returns the
+    ``(id, title)`` of every item it requeued.
+    """
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, title FROM download_queue WHERE status = 'running'"
+        ).fetchall()
+        conn.execute(
+            "UPDATE download_queue SET status = 'queued', crash_resets = 0, "
+            "cancel_requested = 0, force_cancel = 0 WHERE status = 'running'"
+        )
+        conn.commit()
+        return [(r["id"], r["title"]) for r in rows]
+    finally:
+        conn.close()
+
+
+def clear_crash_resets(queue_id):
+    """An item that finished an episode after a restart isn't what crashed it."""
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE download_queue SET crash_resets = 0 WHERE id = ? AND crash_resets > 0",
+            (queue_id,),
+        )
+        conn.commit()
     finally:
         conn.close()
 
@@ -1754,20 +1799,46 @@ def get_all_watch_progress(limit=50, profile_id=1):
         conn.close()
 
 
-def get_watch_history(profile_id=None, query=None, limit=100, offset=0):
-    """Watch history across profiles for the admin dashboard, newest first.
+_HISTORY_SORTS = {
+    "recent": "wp.updated_at DESC, wp.id DESC",
+    "oldest": "wp.updated_at ASC, wp.id ASC",
+    "episode": "LOWER(COALESCE(wp.series_title, '')), wp.series_url, wp.season, wp.episode_number",
+    "episode_desc": "wp.season DESC, wp.episode_number DESC, wp.updated_at DESC",
+    "title": "LOWER(COALESCE(wp.series_title, '')), wp.updated_at DESC",
+}
 
-    Returns (rows, total). Each row carries its profile's name/colour.
-    """
+_SERIES_SORTS = {
+    "recent": "last_watched DESC",
+    "title": "LOWER(COALESCE(series_title, '')) ASC, last_watched DESC",
+    "latest_episode": "max_rank DESC, last_watched DESC",
+    "episodes": "episodes DESC, last_watched DESC",
+}
+
+
+def _history_filters(profile_id, query, series_url=None):
     where, params = [], []
     if profile_id is not None:
         where.append("wp.profile_id = ?")
         params.append(profile_id)
+    if series_url:
+        where.append("wp.series_url = ?")
+        params.append(series_url)
     if query:
         where.append("(wp.series_title LIKE ? OR wp.episode_title LIKE ?)")
         like = f"%{query}%"
         params.extend([like, like])
-    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    return ("WHERE " + " AND ".join(where)) if where else "", params
+
+
+def get_watch_history(
+    profile_id=None, query=None, limit=100, offset=0, series_url=None, sort="recent"
+):
+    """Watch history across profiles for the admin dashboard.
+
+    Returns (rows, total). Each row carries its profile's name/colour.
+    """
+    order_sql = _HISTORY_SORTS.get(sort, _HISTORY_SORTS["recent"])
+    where_sql, params = _history_filters(profile_id, query, series_url)
     conn = get_db()
     try:
         total = conn.execute(
@@ -1779,12 +1850,78 @@ def get_watch_history(profile_id=None, query=None, limit=100, offset=0):
             FROM watch_progress wp
             LEFT JOIN profiles p ON p.id = wp.profile_id
             {where_sql}
-            ORDER BY wp.updated_at DESC, wp.id DESC
+            ORDER BY {order_sql}
             LIMIT ? OFFSET ?
             """,
             (*params, limit, offset),
         ).fetchall()
         return [dict(r) for r in rows], total
+    finally:
+        conn.close()
+
+
+def get_watch_history_series(profile_id=None, query=None, sort="recent", limit=100, offset=0):
+    """Watch history grouped per (profile, series), for the admin dashboard.
+
+    Each group carries how many episodes were touched/completed, the highest
+    episode reached (latest_season/latest_episode) and the most recently
+    watched one (last_season/last_episode). Returns (groups, total).
+    """
+    where_sql, params = _history_filters(profile_id, query)
+    order_sql = _SERIES_SORTS.get(sort, _SERIES_SORTS["recent"])
+    # Rows without a series_url (shouldn't happen, but old clients may have
+    # sent none) are grouped by title instead of all landing in one bucket.
+    group_key = "COALESCE(wp.series_url, wp.series_title, wp.episode_url)"
+    grouped = f"""
+        SELECT wp.profile_id,
+               {group_key} AS series_key,
+               wp.series_url,
+               MAX(wp.series_title) AS series_title,
+               COUNT(*) AS episodes,
+               SUM(wp.completed) AS completed,
+               MAX(wp.season * 10000 + wp.episode_number) AS max_rank,
+               MAX(wp.updated_at) AS last_watched
+        FROM watch_progress wp
+        {where_sql}
+        GROUP BY wp.profile_id, {group_key}
+    """
+    conn = get_db()
+    try:
+        total = conn.execute(
+            f"SELECT COUNT(*) AS cnt FROM ({grouped})", params
+        ).fetchone()["cnt"]
+        rows = conn.execute(
+            f"""
+            SELECT g.*, p.name AS profile_name, p.avatar_color AS profile_color
+            FROM ({grouped}) g
+            LEFT JOIN profiles p ON p.id = g.profile_id
+            ORDER BY {order_sql}
+            LIMIT ? OFFSET ?
+            """,
+            (*params, limit, offset),
+        ).fetchall()
+        groups = []
+        for r in rows:
+            g = dict(r)
+            rank = g.pop("max_rank") or 0
+            g["latest_season"], g["latest_episode"] = divmod(rank, 10000)
+            g["completed"] = g["completed"] or 0
+            last = conn.execute(
+                f"""
+                SELECT season, episode_number, episode_title, completed
+                FROM watch_progress wp
+                WHERE wp.profile_id = ? AND {group_key} = ?
+                ORDER BY wp.updated_at DESC, wp.id DESC LIMIT 1
+                """,
+                (g["profile_id"], g["series_key"]),
+            ).fetchone()
+            if last:
+                g["last_season"] = last["season"]
+                g["last_episode"] = last["episode_number"]
+                g["last_episode_title"] = last["episode_title"]
+                g["last_completed"] = last["completed"]
+            groups.append(g)
+        return groups, total
     finally:
         conn.close()
 

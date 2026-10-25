@@ -661,8 +661,9 @@ POST /api/webapp/request-access
 GET  /api/webapp/request-access/<device_id>
 ```
 The POST returns `{ "device_id", "status": "pending", "code" }`; poll the GET
-until `status` is `approved` (then it carries a normal bearer `token`),
-`denied` or `revoked`.
+(which repeats the `code`) until `status` is `approved` (then it carries a
+normal bearer `token`), `denied` or `revoked`. The browser shows the code so
+the admin can match it to the row in `--web-requests`.
 
 ---
 
@@ -692,8 +693,10 @@ All `/api/admin/*` routes answer `401` without a live admin token (with
 | `POST /api/admin/access-requests/<id>/approve` | Approve a pending `webapp` request (`403` for `admin` requests) |
 | `POST /api/admin/access-requests/<id>/deny` | Deny a pending request |
 | `POST /api/admin/access-requests/<id>/revoke` | Revoke an approved request |
+| `POST /api/admin/access-requests/bulk` | Body `{ "ids": [..], "action": "approve" \| "deny" \| "revoke" }` → `{ done: [ids], failed: [{ id, error }] }`; each id is handled on its own |
 | `GET /api/admin/profiles` | Profiles with `entries`, `completed`, `last_watched` |
-| `GET /api/admin/history?profile_id=&q=&limit=&offset=` | `{ entries: [...], total }` — watch progress rows, newest first |
+| `GET /api/admin/history?profile_id=&series_url=&q=&sort=&limit=&offset=` | `{ entries: [...], total }` — watch progress rows; `sort` = `recent` (default) \| `oldest` \| `episode` \| `episode_desc` \| `title` |
+| `GET /api/admin/history/series?profile_id=&q=&sort=&limit=&offset=` | `{ series: [...], total }` — grouped per profile + series with `episodes`, `completed`, highest (`latest_season/latest_episode`) and last watched (`last_season/last_episode`) episode; `sort` = `recent` \| `latest_episode` \| `title` \| `episodes` |
 | `DELETE /api/admin/history/<entry_id>` | Forget one watched episode (the profile hasn't seen it anymore) |
 | `DELETE /api/admin/history?profile_id=&series_url=` | Forget a whole series for one profile |
 

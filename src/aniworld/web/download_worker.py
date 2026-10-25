@@ -23,11 +23,13 @@ from ..logger import get_logger
 from ..providers import resolve_provider
 from .db import (
     cancel_flags,
+    clear_crash_resets,
     get_custom_path_by_id,
     get_queue_item,
     get_queued_items_by_priority,
     is_queue_cancelled,
     request_cancel,
+    requeue_running_for_shutdown,
     reset_stale_running,
     set_queue_status,
     update_queue_errors,
@@ -45,6 +47,10 @@ _preempt_ids: set = set()      # queue_ids flagged to be preempted (a P0 wants t
 
 _started = False
 _start_lock = threading.Lock()
+
+# Set by shutdown(): from then on workers neither claim new items nor write a
+# failure for the download that was just killed under them.
+_shutting_down = threading.Event()
 
 IDLE_SECONDS = 2
 
@@ -86,6 +92,19 @@ def ensure_started():
             target=_run, name=f"aniworld-download-worker-{i}", daemon=True
         ).start()
     logger.info("Download worker pool started with %d slot(s)", n)
+
+
+def shutdown():
+    """Stop cleanly: requeue running items (not as a crash) and kill FFmpeg.
+
+    Returns the ``(id, title)`` of every requeued item.
+    """
+    from ..models.common.common import kill_all_active_ffmpeg
+
+    _shutting_down.set()
+    requeued = requeue_running_for_shutdown()
+    kill_all_active_ffmpeg()
+    return requeued
 
 
 def thread_id_for(queue_id):
@@ -219,8 +238,11 @@ def _process(item):
                     episode.download()
                 finally:
                     _captcha_mod._local.queue_id = None
+                clear_crash_resets(queue_id)
             except Exception as e:
                 _captcha_mod._local.queue_id = None
+                if _shutting_down.is_set():
+                    return True  # already requeued by shutdown()
                 if queue_id in _preempt_ids:
                     logger.info(
                         "Preempted mid-episode for '%s' — requeueing", item["title"]
@@ -252,6 +274,8 @@ def _process(item):
                 update_queue_progress(queue_id, i + 1, "")
                 return False
 
+        if _shutting_down.is_set():
+            return True
         update_queue_progress(queue_id, len(episodes), "")
         status = "failed" if errors and len(errors) == len(episodes) else "completed"
         set_queue_status(queue_id, status)
@@ -266,6 +290,9 @@ def _run():
         item = None
         bucket = None
         try:
+            if _shutting_down.is_set():
+                time.sleep(IDLE_SECONDS)
+                continue
             item, bucket = _claim_next()
             if not item:
                 time.sleep(IDLE_SECONDS)
@@ -276,7 +303,7 @@ def _run():
             _process(item)
         except Exception:
             logger.error("Download worker error", exc_info=True)
-            if item:
+            if item and not _shutting_down.is_set():
                 try:
                     set_queue_status(item["id"], "failed")
                 except Exception:

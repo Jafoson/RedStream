@@ -57,3 +57,11 @@
   color: #ff6b6b;
   background: rgba(255, 107, 107, 0.12);
 }
+
+.web-access__pin {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  color: var(--gold);
+}

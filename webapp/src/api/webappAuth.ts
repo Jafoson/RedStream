@@ -5,10 +5,13 @@ import { apiFetch } from './client'
 export interface RequestAccessResult {
   device_id: string
   status: 'pending'
+  /** Shown here and in `aniworld --web-requests`, to match the two up. */
+  code: string
 }
 
 export interface PollAccessResult {
   status: 'pending' | 'approved' | 'denied' | 'revoked'
+  code?: string | null
   token?: string
 }
 
