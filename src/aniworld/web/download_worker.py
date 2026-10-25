@@ -69,7 +69,17 @@ def ensure_started():
         if _started:
             return
         _started = True
-    reset_stale_running()
+    # print(), not logger: INFO logging is off by default, and this is exactly
+    # what someone reading a crash-looping container's log needs to see.
+    requeued, failed = reset_stale_running()
+    for qid, title in requeued:
+        print(f"Resuming interrupted download #{qid} '{title}'", flush=True)
+    for qid, title in failed:
+        print(
+            f"Download #{qid} '{title}' was interrupted repeatedly by a server "
+            "crash/restart - marked failed instead of retrying it again",
+            flush=True,
+        )
     n = _max_concurrent()
     for i in range(n):
         threading.Thread(

@@ -2786,8 +2786,13 @@ def start_web_ui(
     force_sso=False,
 ):
     """Start the Flask web UI server."""
+    import faulthandler
     import threading
     import webbrowser
+
+    # A native crash (segfault in a C extension) otherwise kills the process
+    # without a single line of output — dump the Python stacks to stderr.
+    faulthandler.enable()
 
     # Allow env var overrides (Docker-friendly)
     force_sso = force_sso or os.getenv("ANIWORLD_WEB_FORCE_SSO", "0") == "1"

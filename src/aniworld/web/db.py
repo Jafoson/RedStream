@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 
@@ -520,6 +521,14 @@ def init_queue_db():
             )
         except Exception:
             pass  # column already exists
+        # How often an item was found still 'running' at startup, i.e. the
+        # process died while working on it — see reset_stale_running().
+        try:
+            conn.execute(
+                "ALTER TABLE download_queue ADD COLUMN crash_resets INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass  # column already exists
         conn.commit()
     finally:
         conn.close()
@@ -786,16 +795,55 @@ def cancel_flags(queue_id):
         conn.close()
 
 
+# An item that was 'running' when the process died is requeued on startup —
+# but if that very item is what kills the process (OOM from ffmpeg/Chromium,
+# a native crash), requeueing it forever turns into a container crash loop
+# that never gets far enough to serve a single request. After this many
+# interrupted runs it's marked failed instead; it can be retried manually.
+MAX_CRASH_RESETS = 2
+
+
 def reset_stale_running():
-    """Requeue anything left 'running' from a previous process (crash/restart)."""
+    """Requeue anything left 'running' from a previous process (crash/restart).
+
+    Returns ``(requeued, failed)`` — lists of ``(id, title)`` tuples.
+    """
     conn = get_db()
     try:
-        conn.execute(
-            "UPDATE download_queue SET status = 'queued', cancel_requested = 0, "
-            "force_cancel = 0 WHERE status = 'running'"
-        )
+        rows = conn.execute(
+            "SELECT id, title, crash_resets, errors FROM download_queue "
+            "WHERE status = 'running'"
+        ).fetchall()
+        requeued, failed = [], []
+        for row in rows:
+            resets = (row["crash_resets"] or 0) + 1
+            if resets >= MAX_CRASH_RESETS:
+                try:
+                    errors = json.loads(row["errors"] or "[]")
+                except (ValueError, TypeError):
+                    errors = []
+                errors.append({
+                    "url": None,
+                    "error": f"Aborted after {resets} interrupted runs "
+                             "(server crashed/restarted while downloading)",
+                })
+                conn.execute(
+                    "UPDATE download_queue SET status = 'failed', "
+                    "completed_at = datetime('now'), crash_resets = ?, errors = ?, "
+                    "cancel_requested = 0, force_cancel = 0 WHERE id = ?",
+                    (resets, json.dumps(errors), row["id"]),
+                )
+                failed.append((row["id"], row["title"]))
+            else:
+                conn.execute(
+                    "UPDATE download_queue SET status = 'queued', crash_resets = ?, "
+                    "cancel_requested = 0, force_cancel = 0 WHERE id = ?",
+                    (resets, row["id"]),
+                )
+                requeued.append((row["id"], row["title"]))
         conn.execute("UPDATE download_queue SET captcha_url = NULL")
         conn.commit()
+        return requeued, failed
     finally:
         conn.close()
 
