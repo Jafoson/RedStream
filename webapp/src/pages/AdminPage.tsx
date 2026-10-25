@@ -203,7 +203,6 @@ const STATUS_LABEL: Record<string, string> = {
   approved: 'Freigegeben',
   denied: 'Abgelehnt',
   revoked: 'Widerrufen',
-  expired: 'Abgelaufen',
 }
 
 function shortAgent(ua: string | null): string {
@@ -263,7 +262,7 @@ function AccessTab({ onLocked }: { onLocked: () => void }) {
         </div>
         <div className="admin-row__meta" title={row.user_agent ?? ''}>
           {shortAgent(row.user_agent)} · {row.ip_address || 'IP unbekannt'} · angefragt {formatTime(row.requested_at)}
-          {row.kind === 'admin' && row.status === 'approved' && row.expires_at && <> · gültig bis {formatTime(row.expires_at)}</>}
+          {row.status === 'approved' && row.decided_at && <> · freigegeben {formatTime(row.decided_at)}</>}
         </div>
       </div>
       <div className="admin-row__actions">
@@ -501,7 +500,11 @@ export function AdminPage() {
         </div>
         {gate.state === 'ready' && (
           <div className="admin-header__session">
-            {session.data && <span className="admin-muted text-body-md">Sitzung gültig bis {formatTime(session.data.expires_at)}</span>}
+            {session.data && (
+              <span className="admin-muted text-body-md">
+                Dieser Browser ist dauerhaft freigegeben{session.data.approved_at && <> (seit {formatTime(session.data.approved_at)})</>}
+              </span>
+            )}
             <button type="button" className="filter" onClick={logout}>
               Admin abmelden
             </button>

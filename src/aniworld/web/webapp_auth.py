@@ -51,7 +51,8 @@ def request_access_status(device_id):
 # Second, separate approval on top of the one above: only a browser that is
 # already let into the web app may ask, and the admin has to approve it from
 # the server terminal again (`aniworld --web-approve <id>`). The resulting
-# admin token only works for /api/admin/* (see admin_api.py) and expires.
+# admin token only works for /api/admin/* (see admin_api.py) and stays valid
+# for that browser until it is revoked.
 
 
 def _bearer_user():
@@ -83,7 +84,6 @@ def admin_access_status(device_id):
         token = pick_up_admin_token(device_id)
         if token:
             payload["token"] = token
-            payload["expires_at"] = row["expires_at"]
         else:
             # Already handed out once; the browser that holds it keeps it.
             payload["status"] = "used"

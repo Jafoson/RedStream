@@ -306,13 +306,13 @@ CREATE TABLE IF NOT EXISTS web_access_requests (
 # kind = 'webapp': a browser asking to use the TV web app at all (approval
 #   issues a normal api_tokens bearer token, see approve_web_access_request).
 # kind = 'admin': an already-approved web app browser asking to open the admin
-#   dashboard (/verwaltung). Approval issues a separate, short-lived admin
-#   token that is only ever stored hashed (token_hash) once the browser has
-#   picked it up, and is only valid for /api/admin/* — never the other way
-#   round. Admin requests can only be approved from the server terminal, never
-#   from the dashboard itself.
+#   dashboard (/verwaltung). Approval issues a separate admin token that is
+#   only ever stored hashed (token_hash) once the browser has picked it up, and
+#   is only valid for /api/admin/* — never the other way round. It stays valid
+#   for that browser until it is revoked (dashboard logout or --web-revoke).
+#   Admin requests can only be approved from the server terminal, never from
+#   the dashboard itself.
 WEB_ACCESS_KINDS = ("webapp", "admin")
-ADMIN_SESSION_HOURS = 12
 
 # Short code shown both in the browser and in `aniworld --web-requests`, so
 # the admin can tell which pending request is the one in front of them.
@@ -423,8 +423,7 @@ def validate_admin_token(token):
     try:
         row = conn.execute(
             "SELECT * FROM web_access_requests WHERE kind = 'admin' "
-            "AND status = 'approved' AND token_hash = ? "
-            "AND expires_at > datetime('now')",
+            "AND status = 'approved' AND token_hash = ?",
             (_hash_token(token),),
         ).fetchone()
         return dict(row) if row else None
@@ -437,17 +436,7 @@ def _public_access_request(row):
     data = dict(row)
     data.pop("token", None)
     data.pop("token_hash", None)
-    if data.get("kind") == "admin" and data.get("status") == "approved":
-        expires = data.get("expires_at")
-        if expires and expires <= _sqlite_now():
-            data["status"] = "expired"
     return data
-
-
-def _sqlite_now():
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def list_web_access_requests(status=None):
@@ -485,12 +474,11 @@ def approve_web_access_request(request_id):
             token = secrets.token_urlsafe(32)
             conn.execute(
                 "UPDATE web_access_requests SET status = 'approved', token = ?, "
-                "token_hash = ?, decided_at = datetime('now'), "
-                "expires_at = datetime('now', ?) WHERE id = ?",
-                (token, _hash_token(token), f"+{ADMIN_SESSION_HOURS} hours", request_id),
+                "token_hash = ?, decided_at = datetime('now') WHERE id = ?",
+                (token, _hash_token(token), request_id),
             )
             conn.commit()
-            return True, None, {"kind": "admin", "hours": ADMIN_SESSION_HOURS}
+            return True, None, {"kind": "admin"}
         admin = conn.execute(
             "SELECT id, username FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
         ).fetchone()

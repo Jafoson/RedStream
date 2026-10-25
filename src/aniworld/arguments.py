@@ -417,7 +417,8 @@ def parse_args():
             if ok and info["kind"] == "admin":
                 print(
                     f"Approved admin request #{args.web_approve}. "
-                    f"That browser can open the admin dashboard for {info['hours']} hours."
+                    "That browser can open the admin dashboard until you revoke it "
+                    f"(--web-revoke {args.web_approve})."
                 )
             elif ok:
                 print(

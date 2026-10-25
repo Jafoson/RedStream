@@ -40,7 +40,7 @@ def session_info():
     return jsonify(
         {
             "id": g.admin_session["id"],
-            "expires_at": g.admin_session["expires_at"],
+            "approved_at": g.admin_session["decided_at"],
             "ip_address": g.admin_session["ip_address"],
         }
     )

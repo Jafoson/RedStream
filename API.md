@@ -673,8 +673,9 @@ GET  /api/webapp/admin-access/<device_id>
 ```
 Same flow, but the approval must be given for the request of type `admin` in
 the terminal — it can't be approved from the dashboard. The first poll after
-approval returns `{ "status": "approved", "token", "expires_at" }`; the token
-is handed out only once (later polls say `"used"`) and expires after 12 hours.
+approval returns `{ "status": "approved", "token" }`; the token is handed out
+only once (later polls say `"used"`) and stays valid until it is revoked
+(`POST /api/admin/logout` or `aniworld --web-revoke <id>`).
 
 ---
 
@@ -685,7 +686,7 @@ All `/api/admin/*` routes answer `401` without a live admin token (with
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/admin/session` | `{ id, expires_at, ip_address }` of the current admin session |
+| `GET /api/admin/session` | `{ id, approved_at, ip_address }` of the current admin session |
 | `POST /api/admin/logout` | Revoke the current admin session |
 | `GET /api/admin/access-requests` | `{ requests: [...], current_session_id }`, all types, newest first |
 | `POST /api/admin/access-requests/<id>/approve` | Approve a pending `webapp` request (`403` for `admin` requests) |

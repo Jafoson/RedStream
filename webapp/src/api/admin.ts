@@ -1,7 +1,7 @@
 // Admin dashboard — src/aniworld/web/admin_api.py (+ the admin-access gate in
 // webapp_auth.py). The admin token is separate from the normal bearer token:
 // it is only issued after a second approval in the server terminal, only
-// works for /api/admin/*, and expires server-side after a few hours.
+// works for /api/admin/*, and stays valid for this browser until revoked.
 import { ApiError, apiFetch } from './client'
 
 const ADMIN_TOKEN_KEY = 'rstv_admin_token'
@@ -34,7 +34,6 @@ export interface AdminAccessRequest {
 export interface AdminAccessPoll {
   status: 'pending' | 'approved' | 'denied' | 'revoked' | 'used'
   token?: string
-  expires_at?: string
 }
 
 export function requestAdminAccess(): Promise<AdminAccessRequest> {
@@ -66,12 +65,12 @@ async function adminFetch<T>(
 
 export interface AdminSession {
   id: number
-  expires_at: string
+  approved_at: string | null
   ip_address: string | null
 }
 
 export type AccessKind = 'webapp' | 'admin'
-export type AccessStatus = 'pending' | 'approved' | 'denied' | 'revoked' | 'expired'
+export type AccessStatus = 'pending' | 'approved' | 'denied' | 'revoked'
 
 export interface AccessRequestRow {
   id: number
@@ -82,7 +81,6 @@ export interface AccessRequestRow {
   user_agent: string | null
   requested_at: string
   decided_at: string | null
-  expires_at: string | null
 }
 
 export interface AdminProfile {
