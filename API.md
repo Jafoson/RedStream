@@ -702,6 +702,35 @@ All `/api/admin/*` routes answer `401` without a live admin token (with
 
 ---
 
+## Direct Streaming
+
+Plays an episode that isn't downloaded straight from the hoster, relayed
+through the backend (hosters require Referer/Origin/User-Agent headers and
+send no CORS headers, so a browser can't fetch them itself). Nothing is
+written to disk. Only registered while `ANIWORLD_ENABLE_WEBAPP=1`.
+
+### Resolve a stream
+```
+POST /api/live/resolve
+```
+Body: `{ "episode_url", "language"?, "provider"? }` — uses the same provider
+fallback order as a download. Returns
+`{ "url": "/api/live/<sid>/playlist?u=…", "kind": "hls" | "file", "provider" }`
+or `502` when no provider yields a stream (clients then fall back to
+`POST /api/download`).
+
+### Relay
+```
+GET /api/live/<sid>/playlist?u=<b64url>   # HLS playlist, every URI rewritten to this proxy
+GET /api/live/<sid>/media?u=<b64url>      # segment / key / MP4, Range supported
+```
+`<sid>` is a random, in-memory session (expires after 4 h unused) and is the
+only credential these two routes need — a plain `<video src>` can't send an
+Authorization header. A session only relays hosts that appeared in its own
+playlists (`403` otherwise).
+
+---
+
 ## Statistics
 
 ### Sync statistics

@@ -40,6 +40,9 @@ export interface DownloadPlayState {
   provider: string
   customPathId?: number | null
   nextEpisode?: NextEpisodeRef | null
+  // Skip direct streaming and go straight to download-and-play — set when a
+  // direct stream already failed for this episode (PlayerPage's fallback).
+  forceDownload?: boolean
 }
 
 export interface PlayerState {
@@ -64,4 +67,8 @@ export interface PlayerState {
   // library fast path is taken, but PlayerPage falls back to fetching it
   // itself if missing).
   streamUrl?: string
+  // Set when this is a direct stream relayed from the hoster (nothing on
+  // disk, `folder` is empty): 'hls' plays through hls.js, 'file' (a plain
+  // MP4) through the <video> element itself.
+  live?: { kind: 'hls' | 'file' }
 }

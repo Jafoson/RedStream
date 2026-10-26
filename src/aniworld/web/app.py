@@ -564,10 +564,12 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
     webapp_enabled = os.environ.get("ANIWORLD_ENABLE_WEBAPP", "1") == "1"
     if webapp_enabled:
         from .admin_api import admin_bp
+        from .live_stream import live_bp
         from .webapp_auth import webapp_bp
 
         app.register_blueprint(webapp_bp)
         app.register_blueprint(admin_bp)
+        app.register_blueprint(live_bp)
 
     base_url = os.environ.get("ANIWORLD_WEB_BASE_URL", "").strip().rstrip("/")
     if base_url:
@@ -614,6 +616,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         if webapp_enabled:
             csrf.exempt(webapp_bp)
             csrf.exempt(admin_bp)
+            csrf.exempt(live_bp)
 
         if sso_enabled:
             init_oidc(app, force_sso=force_sso)
@@ -2731,6 +2734,11 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             "webapp.request_access_status", # public: polled before a token exists
             "index",                        # public: the TV web app's SPA shell itself, not the data
             "api_auth_me",                  # registered unconditionally above; handles its own auth
+            # Direct-stream relay: the unguessable session id is the
+            # credential (a plain <video src> can't send Authorization);
+            # creating a session (live.resolve) still needs a login.
+            "live.playlist",
+            "live.media",
         }
         for endpoint, view_func in list(app.view_functions.items()):
             if endpoint not in _exempt:

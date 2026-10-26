@@ -6,21 +6,41 @@ import { authHeaders } from '../../api/client'
 
 export interface HlsPlayerProps {
   src: string
+  /** 'file' = a plain video file (direct-stream MP4), played without hls.js. */
+  kind?: 'hls' | 'file'
   onLoadedMetadata?: () => void
+  /** Playback can't continue (hls.js fatal error / media error). */
+  onFatalError?: (reason: string) => void
 }
 
 export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(function HlsPlayer(
-  { src, onLoadedMetadata },
+  { src, kind = 'hls', onLoadedMetadata, onFatalError },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null)
   useImperativeHandle(ref, () => videoRef.current as HTMLVideoElement)
+  const onFatalErrorRef = useRef(onFatalError)
+  onFatalErrorRef.current = onFatalError
 
   useEffect(() => {
     const video = videoRef.current
     if (!video || !src) return
     let cancelled = false
     let hlsInstance: import('hls.js').default | null = null
+
+    const onMediaError = () => onFatalErrorRef.current?.(video.error?.message || 'media error')
+    video.addEventListener('error', onMediaError)
+
+    // Direct-stream MP4: the relay URL carries its own capability token, so
+    // the browser can load it natively (with Range requests for seeking).
+    if (kind === 'file') {
+      video.src = src
+      return () => {
+        video.removeEventListener('error', onMediaError)
+        video.removeAttribute('src')
+        video.load()
+      }
+    }
 
     // Dynamically imported (a plain JS import(), not React.lazy) so hls.js's
     // ~700kB isn't downloaded until a stream URL is actually known — this
@@ -46,7 +66,19 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(function H
       // never only as a non-Safari fallback (same reasoning as react/'s
       // player).
       if (Hls.isSupported()) {
+        // hls.js retries a failing fragment up to 6 times with growing
+        // delays by default — for a direct stream whose hoster went away
+        // that's half a minute of black screen before PlayerPage can fall
+        // back to downloading. A short, bounded retry is plenty for both
+        // that and local files.
+        const retry = {
+          maxTimeToFirstByteMs: 10000,
+          maxLoadTimeMs: 60000,
+          timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 0 },
+          errorRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 4000 },
+        }
         const hls = new Hls({
+          fragLoadPolicy: { default: retry },
           xhrSetup: (xhr) => {
             for (const [key, value] of Object.entries(authHeaders())) {
               xhr.setRequestHeader(key, value)
@@ -54,6 +86,21 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(function H
           },
         })
         hlsInstance = hls
+        let networkRetries = 0
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data.fatal) return
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 1) {
+            networkRetries += 1
+            hls.startLoad()
+            return
+          }
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR && networkRetries < 1) {
+            networkRetries += 1
+            hls.recoverMediaError()
+            return
+          }
+          onFatalErrorRef.current?.(data.details || 'hls error')
+        })
         hls.loadSource(src)
         hls.attachMedia(video)
       } else {
@@ -66,9 +113,10 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(function H
 
     return () => {
       cancelled = true
+      video.removeEventListener('error', onMediaError)
       hlsInstance?.destroy()
     }
-  }, [src])
+  }, [src, kind])
 
   return (
     <video

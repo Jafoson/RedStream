@@ -45,3 +45,9 @@
 .download-play__status--error {
   color: #ff6b6b;
 }
+
+.download-play__note {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+}

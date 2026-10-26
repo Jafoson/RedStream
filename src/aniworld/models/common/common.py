@@ -1467,6 +1467,40 @@ def download(self):
     raise RuntimeError("Download failed: no providers available")
 
 
+def resolve_live_stream(self, attempts_per_provider=2):
+    """Resolve a playable upstream stream for the web app's direct streaming.
+
+    Same provider fallback as watch()/download(), but nothing is played or
+    written: returns ``{"provider", "url", "headers"}`` — the direct stream
+    URL plus the headers the hoster expects (the web app's backend proxy,
+    web/live_stream.py, has to send them, a browser can't).
+    """
+    provider_errors = {}
+    for provider_name in _get_provider_attempt_order(self):
+        _set_selected_provider(self, provider_name)
+        tries = 1 if provider_name in SINGLE_ATTEMPT_PROVIDERS else attempts_per_provider
+        for attempt in range(1, tries + 1):
+            try:
+                _reset_provider_resolution_cache(self)
+                stream_url = self.stream_url
+                if not stream_url:
+                    raise RuntimeError("no stream URL")
+                return {
+                    "provider": provider_name,
+                    "url": stream_url,
+                    "headers": dict(PROVIDER_HEADERS_D.get(provider_name, {})),
+                }
+            except Exception as e:
+                provider_errors[provider_name] = e
+                logger.warning(
+                    f"Live stream attempt {attempt}/{tries} failed for provider "
+                    f"{provider_name}: {e}"
+                )
+    if provider_errors:
+        raise RuntimeError(_build_provider_failure_message("Streaming", provider_errors))
+    raise RuntimeError("Streaming failed: no providers available")
+
+
 def watch(self):
     """Watch the current episode with provider headers."""
 

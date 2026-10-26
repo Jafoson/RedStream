@@ -1,6 +1,8 @@
 // Port of app/lib/screens/download_play_screen.dart: resolve an already-
-// downloaded episode straight to the player, or start a download and wait
-// for it, showing ffmpeg progress in the meantime.
+// downloaded episode straight to the player; otherwise stream it directly
+// from the hoster (api/live.ts, unless switched off in Settings), and only if
+// that isn't possible start a download and wait for it, showing ffmpeg
+// progress in the meantime.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
@@ -8,6 +10,7 @@ import { findDownloadedFolder, getLibrary } from '../api/library'
 import { getStreamUrl } from '../api/stream'
 import { findNextEpisodeAfter, getPreferredLanguage } from '../api/series'
 import { cancelQueueItem, enqueueDownload, findQueueItemByEpisode, getQueue, type QueueItem } from '../api/queue'
+import { isDirectStreamEnabled, resolveLiveStream, type LiveKind } from '../api/live'
 import type { DownloadPlayState, NextEpisodeRef, PlayerState } from '../navigation/playerState'
 import './DownloadPlayPage.css'
 
@@ -20,7 +23,9 @@ export function DownloadPlayPage() {
   const queryClient = useQueryClient()
   const s = state as DownloadPlayState | null
 
-  const [status, setStatus] = useState<'resolving' | 'queued' | 'downloading' | 'failed'>('resolving')
+  const [status, setStatus] = useState<'resolving' | 'streaming' | 'queued' | 'downloading' | 'failed'>('resolving')
+  // Shown once direct streaming was tried and didn't work for this episode.
+  const [streamUnavailable, setStreamUnavailable] = useState(false)
   const [percent, setPercent] = useState<number | null>(null)
   const queueIdRef = useRef<number | null>(null)
   const stoppedRef = useRef(false)
@@ -34,7 +39,7 @@ export function DownloadPlayPage() {
   })
 
   const goToPlayer = useCallback(
-    (folder: string, streamUrl?: string) => {
+    (folder: string, streamUrl?: string, liveKind?: LiveKind) => {
       if (!s) return
       const { language, nextEpisode } = resolvedRef.current
       const playerState: PlayerState = {
@@ -51,6 +56,7 @@ export function DownloadPlayPage() {
         customPathId: s.customPathId,
         nextEpisode,
         streamUrl,
+        live: liveKind ? { kind: liveKind } : undefined,
       }
       navigate('/watch', { replace: true, state: playerState })
     },
@@ -182,7 +188,28 @@ export function DownloadPlayPage() {
         return
       }
 
-      // 2. Already queued/running from elsewhere?
+      // 2. Not on disk: stream it straight from the hoster instead of
+      // making the viewer wait for the whole episode to download.
+      if (s!.forceDownload) {
+        setStreamUnavailable(true)
+      } else if (isDirectStreamEnabled()) {
+        setStatus('streaming')
+        try {
+          const live = await resolveLiveStream({
+            episodeUrl: s!.episodeUrl,
+            language: resolvedRef.current.language,
+            provider: s!.provider,
+          })
+          if (stoppedRef.current) return
+          goToPlayer('', live.url, live.kind)
+          return
+        } catch {
+          if (stoppedRef.current) return
+          setStreamUnavailable(true)
+        }
+      }
+
+      // 3. Already queued/running from elsewhere?
       let id = await findQueueItemByEpisode(s!.episodeUrl)
       if (id === null) {
         const result = await enqueueDownload({
@@ -249,9 +276,13 @@ export function DownloadPlayPage() {
             </div>
             <p className="download-play__status">
               {status === 'resolving' && 'Wird aufgelöst…'}
+              {status === 'streaming' && 'Stream wird vorbereitet…'}
               {status === 'queued' && 'In der Warteschlange…'}
               {status === 'downloading' && `Lädt herunter… ${percent !== null ? `${Math.round(percent)}%` : ''}`}
             </p>
+            {streamUnavailable && (
+              <p className="download-play__note">Direktes Streaming ist für diese Folge nicht möglich – sie wird heruntergeladen.</p>
+            )}
           </>
         )}
         {status === 'failed' && (

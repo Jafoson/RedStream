@@ -2,10 +2,11 @@
 // and "Verbindung" (revoke device access). The native-only "Server"/"Updates"
 // sections from app/lib/screens/settings_screen.dart don't apply here: this
 // app is always same-origin and has no self-update mechanism.
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getStorageStats } from '../api/library'
+import { isDirectStreamEnabled, setDirectStreamEnabled } from '../api/live'
 import { useAuth } from '../context/AuthContext'
 import { useFocusEngine, useRegisterNav } from '../tv/FocusEngine'
 import { useAutoScrollRow } from '../tv/alignRow'
@@ -43,20 +44,29 @@ export function SettingsPage() {
   const scrollerRef = useRef<HTMLDivElement>(null)
   const { data } = useQuery({ queryKey: ['storage-stats'], queryFn: getStorageStats })
   const isTv = useIsTv()
+  const [directStream, setDirectStream] = useState(isDirectStreamEnabled)
+
+  const toggleDirectStream = () =>
+    setDirectStream((on) => {
+      setDirectStreamEnabled(!on)
+      return !on
+    })
 
   useRegisterNav(
-    [1, 1, 1],
+    [1, 1, 1, 1],
     (row) => {
       if (row === 0) cycleTvOverride()
-      else if (row === 1) logout()
-      else if (row === 2) navigate('/verwaltung')
+      else if (row === 1) toggleDirectStream()
+      else if (row === 2) logout()
+      else if (row === 3) navigate('/verwaltung')
     },
     [],
   )
   useAutoScrollRow(scrollerRef)
   const tvToggleFocused = focus.region === 'content' && focus.row === 0
-  const revokeFocused = focus.region === 'content' && focus.row === 1
-  const adminFocused = focus.region === 'content' && focus.row === 2
+  const streamFocused = focus.region === 'content' && focus.row === 1
+  const revokeFocused = focus.region === 'content' && focus.row === 2
+  const adminFocused = focus.region === 'content' && focus.row === 3
 
   return (
     <div className="scroller" ref={scrollerRef}>
@@ -112,6 +122,31 @@ export function SettingsPage() {
         <div className="section-head">
           <div className="section-title">
             <span className="bar" />
+            Wiedergabe
+          </div>
+        </div>
+        <div className="panel settings-section">
+          <p className="text-body-md settings-section__hint">
+            Noch nicht heruntergeladene Folgen starten sofort und werden direkt vom Anbieter gestreamt,
+            statt erst komplett heruntergeladen zu werden. Klappt das bei einer Folge nicht, wird sie
+            wie bisher heruntergeladen.
+          </p>
+          <button
+            type="button"
+            className={'btn btn-ghost row-anchor' + (directStream ? ' on' : '') + (streamFocused ? ' is-foc' : '')}
+            data-row="1"
+            onMouseEnter={(e) => setFocus({ region: 'content', row: 1, col: 0 }, e)}
+            onClick={toggleDirectStream}
+          >
+            Direkt streamen: {directStream ? 'An' : 'Aus'}
+          </button>
+        </div>
+      </section>
+
+      <section className="settings-block">
+        <div className="section-head">
+          <div className="section-title">
+            <span className="bar" />
             Verbindung
           </div>
         </div>
@@ -119,7 +154,7 @@ export function SettingsPage() {
           <p className="text-body-md settings-section__hint">
             Dieser Browser ist über die Geräte-Freigabe mit dem Server verbunden.
           </p>
-          <button type="button" className={'filter row-anchor' + (revokeFocused ? ' is-foc' : '')} data-row="1" onClick={logout}>
+          <button type="button" className={'filter row-anchor' + (revokeFocused ? ' is-foc' : '')} data-row="2" onClick={logout}>
             Zugriff widerrufen
           </button>
         </div>
@@ -140,8 +175,8 @@ export function SettingsPage() {
           <button
             type="button"
             className={'filter row-anchor' + (adminFocused ? ' is-foc' : '')}
-            data-row="2"
-            onMouseEnter={(e) => setFocus({ region: 'content', row: 2, col: 0 }, e)}
+            data-row="3"
+            onMouseEnter={(e) => setFocus({ region: 'content', row: 3, col: 0 }, e)}
             onClick={() => navigate('/verwaltung')}
           >
             Admin-Bereich öffnen

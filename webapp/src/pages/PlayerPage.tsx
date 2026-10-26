@@ -42,6 +42,7 @@ export function PlayerPage() {
   const lastKnownRef = useRef({ time: 0, duration: 0 })
   const nextSegmentPrefetchedRef = useRef(false)
   const nextEpisodeAdvancedRef = useRef(false)
+  const streamFallbackRef = useRef(false)
 
   useEffect(() => {
     if (!s) return
@@ -52,6 +53,7 @@ export function PlayerPage() {
     // from the *previous* episode would silently make this one skip its own
     // resume-position/next-segment-prefetch behavior.
     resumeAppliedRef.current = false
+    streamFallbackRef.current = false
     nextSegmentPrefetchedRef.current = false
     nextEpisodeAdvancedRef.current = false
 
@@ -84,7 +86,9 @@ export function PlayerPage() {
       .catch(() => {})
 
     // Prefetch the next episode as soon as this one starts, matching Flutter.
-    if (s.nextEpisode) {
+    // Not while direct streaming: the next episode will be streamed the same
+    // way, so downloading it in the background would only cost disk space.
+    if (s.nextEpisode && !s.live) {
       enqueueDownload({
         title: s.seriesTitle,
         series_url: s.seriesUrl,
@@ -387,6 +391,31 @@ export function PlayerPage() {
     releaseNavigation()
   }
 
+  // A direct stream died (hoster dropped the connection, token expired,
+  // segments in a format the browser can't play, …): fall back to the old
+  // download-and-play path for this episode. Progress saved so far is
+  // picked up again as the resume position once the download is done.
+  function handleStreamError(reason: string) {
+    if (!s?.live || streamFallbackRef.current) return
+    streamFallbackRef.current = true
+    console.warn('Direct stream failed, falling back to download:', reason)
+    const downloadState: DownloadPlayState = {
+      episodeUrl: s.episodeUrl,
+      seriesTitle: s.seriesTitle,
+      seriesUrl: s.seriesUrl,
+      season: s.season,
+      episodeNumber: s.episodeNumber,
+      episodeTitle: s.episodeTitle,
+      absoluteEpisodeNumber: s.absoluteEpisodeNumber,
+      language: s.language,
+      provider: s.provider,
+      customPathId: s.customPathId,
+      nextEpisode: s.nextEpisode,
+      forceDownload: true,
+    }
+    navigate('/download-play', { replace: true, state: downloadState })
+  }
+
   if (!s) {
     navigate('/', { replace: true })
     return null
@@ -401,7 +430,13 @@ export function PlayerPage() {
           changes identity), so if HlsPlayer mounted conditionally later, that
           effect would already be done running with videoRef.current still
           null and would never re-attach listeners to the real element. */}
-      <HlsPlayer src={streamUrl ?? ''} onLoadedMetadata={handleLoadedMetadata} ref={videoRef} />
+      <HlsPlayer
+        src={streamUrl ?? ''}
+        kind={s.live?.kind}
+        onLoadedMetadata={handleLoadedMetadata}
+        onFatalError={handleStreamError}
+        ref={videoRef}
+      />
       <div className="pl-grain" />
       <div className="pl-vignette" />
       <PlayerControls
