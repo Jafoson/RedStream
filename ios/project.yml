@@ -5,6 +5,11 @@ options:
   bundleIdPrefix: de.redstream
   deploymentTarget:
     iOS: "16.0"
+packages:
+  # Google Cast SDK (Chromecast / Android TV), Google's binary in an SPM wrapper.
+  GoogleCast:
+    url: https://github.com/SRGSSR/google-cast-sdk
+    exactVersion: 4.8.6
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -15,6 +20,8 @@ targets:
     type: application
     platform: iOS
     sources: [RedStream]
+    dependencies:
+      - package: GoogleCast
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.redstream.app

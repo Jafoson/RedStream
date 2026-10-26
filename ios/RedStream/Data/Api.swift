@@ -220,6 +220,12 @@ final class Api: @unchecked Sendable {
         return comps.percentEncodedPath + (comps.percentEncodedQuery.map { "?" + $0 } ?? "")
     }
 
+    /// Login-free, short-lived URL (path) for a downloaded episode — for an
+    /// Apple TV / Cast device or anything else that can't log in (web/share.py).
+    func share(_ streamPath: String) async throws -> String {
+        (try await post("/api/share", ["path": streamPath]) as StreamResponse).url
+    }
+
     func liveStream(_ episodeUrl: String, language: String?, provider: String?) async throws -> LiveStream {
         var body: [String: Any] = ["episode_url": episodeUrl]
         if let language = language { body["language"] = language }

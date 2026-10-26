@@ -38,7 +38,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 @main
 struct RedStreamApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var app = AppState()
+    @StateObject private var app: AppState
+
+    init() {
+        // Google Cast has to be set up before anything touches it (AppState does).
+        GoogleCastManager.configure()
+        _app = StateObject(wrappedValue: AppState())
+    }
 
     var body: some Scene {
         WindowGroup {

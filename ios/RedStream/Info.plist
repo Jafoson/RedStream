@@ -29,7 +29,13 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>RedStream verbindet sich mit deinem RedStream-Server im lokalen Netzwerk.</string>
+	<string>RedStream verbindet sich mit deinem RedStream-Server und sucht Fernseher (Chromecast, Android TV) im lokalen Netzwerk.</string>
+	<!-- Google Cast discovery (Default Media Receiver CC1AD845). -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_googlecast._tcp</string>
+		<string>_CC1AD845._googlecast._tcp</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

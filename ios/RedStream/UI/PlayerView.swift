@@ -32,6 +32,8 @@ final class PlayerModel: ObservableObject {
     init(app: AppState, item: PlayItem) {
         self.app = app
         self.item = item
+        player.allowsExternalPlayback = true
+        player.usesExternalPlaybackWhileExternalScreenIsActive = true
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
@@ -208,9 +210,11 @@ final class PlayerModel: ObservableObject {
         let (ep, next) = (try? await lookupSeason(api: api, item: item)) ?? (nil, nil)
         let folder = allowDownloaded ? (item.folder ?? (ep?.isDownloaded == true ? ep?.folder : nil)) : nil
         if let folder = folder,
-           let path = try? await api.downloadedStream(folder: folder, season: item.season, episode: item.episodeNumber),
-           let url = api.absolute(path) {
-            return (url, next)
+           let path = try? await api.downloadedStream(folder: folder, season: item.season, episode: item.episodeNumber) {
+            // Login-free URL, so AirPlay to an Apple TV works (it fetches the
+            // stream itself and can't send our auth header).
+            let shared = try? await api.share(path)
+            if let url = api.absolute(shared ?? path) { return (url, next) }
         }
         let live = try await api.liveStream(item.episodeUrl, language: item.language, provider: item.provider)
         guard let url = api.absolute(live.url) else { throw ApiError(status: 0, message: "Ungültige Stream-Adresse") }
@@ -318,6 +322,9 @@ struct PlayerView: View {
                     .lineLimit(1)
             }
             Spacer()
+            AirPlayButton()
+                .frame(width: 44, height: 44)
+                .accessibilityLabel("AirPlay")
             if !model.languages.isEmpty {
                 Menu {
                     ForEach(model.languages, id: \.self) { lang in

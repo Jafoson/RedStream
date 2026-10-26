@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 
 private func describe(_ screen: Screen) -> String {
@@ -34,10 +35,30 @@ struct CastSheet: View {
                     cast.select(nil)
                     dismiss()
                 }
+                // Apple TV: the system AirPlay picker; once a route is chosen,
+                // the iPhone player plays there.
+                TargetRow(icon: "airplayvideo", title: "Apple TV (AirPlay)", subtitle: "Gerät wählen – Folgen auf dem iPhone laufen dann dort", selected: false) {}
+                    .overlay(AirPlayButton(prioritizeVideo: true).opacity(0.02))
+                let connectedName = cast.gcast.connected
+                if let name = connectedName, !cast.gcast.devices.contains(where: { $0.name == name }) {
+                    TargetRow(icon: "tv.badge.wifi", title: name, subtitle: "Google Cast · verbunden", selected: true) { dismiss() }
+                }
+                ForEach(cast.gcast.devices) { d in
+                    let isConnected = d.name == connectedName
+                    TargetRow(
+                        icon: "tv.badge.wifi",
+                        title: d.name,
+                        subtitle: "Google Cast" + (isConnected ? " · verbunden" : (d.model.map { " · " + $0 } ?? "")),
+                        selected: isConnected
+                    ) {
+                        if !isConnected { cast.connectGcast(d) }
+                        dismiss()
+                    }
+                }
                 if let error = error {
                     Text("Fernseher konnten nicht geladen werden: \(error)").foregroundColor(RS.error).padding(8)
                 } else if let list = screens {
-                    if list.isEmpty {
+                    if list.isEmpty && cast.gcast.devices.isEmpty {
                         Muted("Kein Fernseher online. Öffne RedStream im Browser des Fernsehers – unter Einstellungen → Bildschirm muss „Als Bildschirm verfügbar“ an sein.")
                             .padding(8)
                     }
@@ -48,7 +69,7 @@ struct CastSheet: View {
                             icon: "tv",
                             title: s.name + (sameProfile ? "  · dein Profil" : ""),
                             subtitle: (s.profileName.map { "Profil \($0) · " } ?? "") + describe(s),
-                            selected: cast.target?.id == s.id
+                            selected: cast.target?.kind == .screen && cast.target?.id == s.id
                         ) {
                             cast.select(s)
                             dismiss()
@@ -63,6 +84,8 @@ struct CastSheet: View {
         .background(RS.panel.ignoresSafeArea())
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .onAppear { cast.gcast.startDiscovery() }
+        .onDisappear { cast.gcast.stopDiscovery() }
         .task {
             while !Task.isCancelled {
                 do {
@@ -123,7 +146,7 @@ struct RemoteBar: View {
                     ProgressLine(fraction: (st?.position ?? 0) / d, height: 3)
                 }
                 HStack(spacing: 4) {
-                    Image(systemName: "tv").foregroundColor(RS.accent).padding(.horizontal, 6)
+                    Image(systemName: target.kind == .gcast ? "tv.badge.wifi" : "tv").foregroundColor(RS.accent).padding(.horizontal, 6)
                     Button { app.castSheetOpen = true } label: {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(target.name).font(.subheadline.bold()).foregroundColor(RS.text).lineLimit(1)
@@ -146,7 +169,7 @@ struct RemoteBar: View {
                 .padding(.vertical, 8)
             }
             .background(RS.panel2)
-            .task(id: target.id) {
+            .task(id: target.id + "\(target.kind)") {
                 while !Task.isCancelled {
                     await cast.refreshTarget()
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -181,4 +204,21 @@ private struct RemoteButton: View {
         }
         .accessibilityLabel(label)
     }
+}
+
+/// The system AirPlay picker (Apple TV and other AirPlay receivers).
+struct AirPlayButton: UIViewRepresentable {
+    var prioritizeVideo = true
+    var tint: UIColor = .white
+
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let v = AVRoutePickerView()
+        v.prioritizesVideoDevices = prioritizeVideo
+        v.tintColor = tint
+        v.activeTintColor = UIColor(RS.accent)
+        v.backgroundColor = .clear
+        return v
+    }
+
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
