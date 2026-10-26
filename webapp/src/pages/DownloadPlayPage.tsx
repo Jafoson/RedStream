@@ -12,6 +12,7 @@ import { findNextEpisodeAfter, getPreferredLanguage, setSeriesLanguage } from '.
 import { cancelQueueItem, enqueueDownload, findQueueItemByEpisode, getQueue, type QueueItem } from '../api/queue'
 import { isDirectStreamEnabled, resolveLiveStream, type LiveKind } from '../api/live'
 import { languageLabel } from '../components/player/PlayerControls'
+import { clearNowPlaying, setNowPlaying, type NowPlaying } from '../cast/playback'
 import type { DownloadPlayState, NextEpisodeRef, PlayerState } from '../navigation/playerState'
 import './DownloadPlayPage.css'
 
@@ -255,6 +256,22 @@ export function DownloadPlayPage() {
     start()
     return stop
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s])
+
+  // Shows up as "loading" in the cast heartbeat until the player takes over.
+  useEffect(() => {
+    if (!s) return
+    const info: NowPlaying = {
+      episodeUrl: s.episodeUrl,
+      seriesTitle: s.seriesTitle,
+      seriesUrl: s.seriesUrl,
+      season: s.season,
+      episodeNumber: s.episodeNumber,
+      episodeTitle: s.episodeTitle,
+      language: s.language,
+    }
+    setNowPlaying(info, null)
+    return () => clearNowPlaying(info)
   }, [s])
 
   async function handleCancel() {

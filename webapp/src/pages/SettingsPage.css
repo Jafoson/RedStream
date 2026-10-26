@@ -18,3 +18,19 @@
   display: flex;
   justify-content: space-between;
 }
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 420px;
+}
+
+.settings-field .text-input {
+  box-sizing: border-box;
+  height: 46px;
+}
+
+.settings-field .text-input.is-foc {
+  box-shadow: 0 0 0 2px var(--accent);
+}

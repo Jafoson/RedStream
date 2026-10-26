@@ -12,6 +12,7 @@ import { FocusProvider } from './tv/FocusEngine'
 import { ToastProvider } from './tv/ToastContext'
 import { PlayerPage } from './pages/PlayerPage'
 import { AdminPage } from './pages/AdminPage'
+import { CastReceiver } from './cast/CastReceiver'
 // Deliberately a plain eager import, not React.lazy() — hls.js's ~700kB is
 // still code-split (see HlsPlayer.tsx's own dynamic import('hls.js')), but
 // wrapping this whole route in Suspense measurably delayed React's commit
@@ -35,14 +36,17 @@ function AppBody() {
   if (state === 'needs-profile') return <ProfileSelectPage />
 
   return (
-    <Routes>
+    <>
+      <CastReceiver />
+      <Routes>
       <Route path="/" element={<Shell />} />
       <Route path="/watch" element={<PlayerPage />} />
       <Route path="/download-play" element={<DownloadPlayPage />} />
       <Route path="/detail" element={<DetailPage />} />
       <Route path="/verwaltung" element={<AdminPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </>
   )
 }
 

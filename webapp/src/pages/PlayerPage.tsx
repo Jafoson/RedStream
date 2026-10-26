@@ -16,6 +16,7 @@ import {
 } from '../api/stream'
 import { enqueueDownload } from '../api/queue'
 import { getProviders, setSeriesLanguage } from '../api/series'
+import { clearNowPlaying, setNowPlaying, type NowPlaying } from '../cast/playback'
 import { findDownloadedFolder, getLibrary } from '../api/library'
 import { authHeaders } from '../api/client'
 import { AUTO_ADVANCE_THRESHOLD_S, sortLanguages } from '../components/player/PlayerControls'
@@ -113,6 +114,22 @@ export function PlayerPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s?.folder, s?.season, s?.episodeNumber])
+
+  // Tell the cast heartbeat (cast/CastReceiver.tsx) what's playing here.
+  useEffect(() => {
+    if (!s) return
+    const info: NowPlaying = {
+      episodeUrl: s.episodeUrl,
+      seriesTitle: s.seriesTitle,
+      seriesUrl: s.seriesUrl,
+      season: s.season,
+      episodeNumber: s.episodeNumber,
+      episodeTitle: s.episodeTitle,
+      language: s.language,
+    }
+    setNowPlaying(info, videoRef.current)
+    return () => clearNowPlaying(info)
+  }, [s])
 
   useEffect(() => {
     if (!streamUrl || !s) return
