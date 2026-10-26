@@ -1,0 +1,52 @@
+--- setup
+Starting: Intent { cmp=de.redstream.app/.MainActivity }
+screenshot 01_einrichtung (51297 bytes)
+screenshot 02_freigabe_code (79345 bytes)
+--- approve
+Access Requests (Type admin = admin dashboard)
+ID  Type    Code    Status   IP         User-Agent                                        Requested          
+1   webapp  CDWMN8  pending  127.0.0.1  RedStream-Android/1 (Android 14; Google sdk_gpho  2026-10-26 08:56:37
+
+Approved request #1. That browser is now logged in as admin 'admin'.
+Access Requests (Type admin = admin dashboard)
+ID  Type    Code    Status    IP         User-Agent                                        Requested          
+1   webapp  CDWMN8  approved  127.0.0.1  RedStream-Android/1 (Android 14; Google sdk_gpho  2026-10-26 08:56:37
+
+screenshot 03_profilauswahl (52711 bytes)
+--- home
+screenshot 04_start (135920 bytes)
+screenshot 05_start_leisten (131968 bytes)
+--- detail
+screenshot 06_detail (183534 bytes)
+screenshot 07_detail_folgen (181119 bytes)
+--- player
+screenshot 08_player (391438 bytes)
+screenshot 09_player_steuerung (329343 bytes)
+--- browse
+screenshot 10_entdecken (110605 bytes)
+screenshot 11_entdecken_serien (110479 bytes)
+--- search
+screenshot 12_suche (82740 bytes)
+--- watchlist
+screenshot 13_meine_liste (87754 bytes)
+--- cast
+screenshot 14_tv_auswahl (179642 bytes)
+screenshot 15_fernbedienung (192363 bytes)
+FAILED cast: 'Breaking Bad' not on screen after 20s; visible: ['Dandadan', 'Dandadan', '2024  ·  Action · Comedy', 'Weiterschauen S01E04', 'Meine Liste', 'Deutsch', 'Dandadan – Demo-Beschreibung für die Screenshots der Android-App. Die echten Inhalte kommen im Betrieb von den Seiten selbst.', 'Staffel 1', 'Staffel 2', '1', 'Der Anfang', 'Deutsch · Untertitel DE · Untertitel EN', 'Optionen', '2', 'Folge 2', 'Heruntergeladen', 'Deutsch · Untertitel DE · Untertitel EN', 'Optionen', '3', 'Folge 3', 'Optionen', 'Zurück', 'RedStream', 'Auf TV abspielen', 'TV Wohnzimmer', 'Spielt: Frieren · S01E03  9:19 / 23:40', '10 Sek. zurück', 'Pause', '10 Sek. vor', 'Stopp', 'Start', 'Entdecken', 'Suche', 'Meine Liste', 'Mehr']
+Traceback (most recent call last):
+  File "/home/runner/work/RedStream/RedStream/android/ci/drive.py", line 110, in step
+    fn()
+    ~~^^
+  File "/home/runner/work/RedStream/RedStream/android/ci/drive.py", line 229, in cast
+    tap_text("Breaking Bad", exact=True)
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/RedStream/RedStream/android/ci/drive.py", line 86, in tap_text
+    tap(wait_for(label, timeout, exact))
+        ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/RedStream/RedStream/android/ci/drive.py", line 78, in wait_for
+    raise RuntimeError(f"'{label}' not on screen after {timeout}s; visible: {visible_texts()[:40]}")
+RuntimeError: 'Breaking Bad' not on screen after 20s; visible: ['Dandadan', 'Dandadan', '2024  ·  Action · Comedy', 'Weiterschauen S01E04', 'Meine Liste', 'Deutsch', 'Dandadan – Demo-Beschreibung für die Screenshots der Android-App. Die echten Inhalte kommen im Betrieb von den Seiten selbst.', 'Staffel 1', 'Staffel 2', '1', 'Der Anfang', 'Deutsch · Untertitel DE · Untertitel EN', 'Optionen', '2', 'Folge 2', 'Heruntergeladen', 'Deutsch · Untertitel DE · Untertitel EN', 'Optionen', '3', 'Folge 3', 'Optionen', 'Zurück', 'RedStream', 'Auf TV abspielen', 'TV Wohnzimmer', 'Spielt: Frieren · S01E03  9:19 / 23:40', '10 Sek. zurück', 'Pause', '10 Sek. vor', 'Stopp', 'Start', 'Entdecken', 'Suche', 'Meine Liste', 'Mehr']
+screenshot zz_error_cast (192551 bytes)
+--- more
+screenshot 17_mehr (156084 bytes)
+FAILURES: ["cast: 'Breaking Bad' not on screen after 20s; visible: ['Dandadan', 'Dandadan', '2024  ·  Action · Comedy', 'Weiterschauen S01E04', 'Meine Liste', 'Deutsch', 'Dandadan – Demo-Beschreibung für die Screenshots der Android-App. Die echten Inhalte kommen im Betrieb von den Seiten selbst.', 'Staffel 1', 'Staffel 2', '1', 'Der Anfang', 'Deutsch · Untertitel DE · Untertitel EN', 'Optionen', '2', 'Folge 2', 'Heruntergeladen', 'Deutsch · Untertitel DE · Untertitel EN', 'Optionen', '3', 'Folge 3', 'Optionen', 'Zurück', 'RedStream', 'Auf TV abspielen', 'TV Wohnzimmer', 'Spielt: Frieren · S01E03  9:19 / 23:40', '10 Sek. zurück', 'Pause', '10 Sek. vor', 'Stopp', 'Start', 'Entdecken', 'Suche', 'Meine Liste', 'Mehr']"]
