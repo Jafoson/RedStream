@@ -7,6 +7,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useCast } from '../CastContext'
 import { TopBar } from '../components'
 import { setViewOverride } from '../view'
+import { InstallCard } from '../InstallHint'
 
 export function MoreScreen() {
   const { switchProfile, logout } = useAuth()
@@ -20,6 +21,7 @@ export function MoreScreen() {
     <>
       <TopBar title="Mehr" />
       <div className="m-scroll m-more">
+        <InstallCard />
         <Card title="Profil">
           <div className="m-more__value">{profileName}</div>
           <button type="button" className="m-btn m-btn--outline" onClick={switchProfile}>
@@ -75,7 +77,7 @@ export function MoreScreen() {
             Zugriff widerrufen
           </button>
         </Card>
-        <p className="m-muted m-more__footer">RedStream im Browser · Tipp: Über „Zum Home-Bildschirm“ wird daraus eine App.</p>
+        <p className="m-muted m-more__footer">RedStream im Browser</p>
       </div>
     </>
   )

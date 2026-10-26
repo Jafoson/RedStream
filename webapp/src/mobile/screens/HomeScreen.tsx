@@ -4,6 +4,7 @@ import { getNewAnimes, getNewSeries, getPopularAnimes, getPopularMovies, getPopu
 import { getAllProgress, type ProgressEntry } from '../../api/stream'
 import { Poster, PosterCard, ProgressLine, SectionTitle, TopBar, openSeries, usePlay } from '../components'
 import { epCode } from '../format'
+import { InstallBanner } from '../InstallHint'
 
 const RAILS: [string, string, () => Promise<BrowseItem[]>][] = [
   ['Neue Anime', 'new-animes', getNewAnimes],
@@ -24,6 +25,7 @@ export function HomeScreen() {
     <>
       <TopBar title="Start" />
       <div className="m-scroll">
+        <InstallBanner />
         {(cont.data?.length ?? 0) > 0 && (
           <>
             <SectionTitle>Weiterschauen</SectionTitle>

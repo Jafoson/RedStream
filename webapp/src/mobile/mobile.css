@@ -890,3 +890,53 @@
 .m-dim {
   color: rgba(255, 255, 255, 0.7);
 }
+
+/* ── Als App installieren ── */
+.m-install {
+  margin: 4px 16px 14px;
+  padding: 14px 14px 16px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, var(--panel)), var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.m-install__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+.m-install__head strong {
+  flex: 1;
+  font-size: 16px;
+}
+.m-install__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+}
+.m-install__close {
+  width: 36px;
+  height: 36px;
+  margin: -6px -6px -6px 0;
+  color: var(--muted);
+}
+.m-install__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.m-install__steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 1.9;
+}
+.m-install__inline {
+  vertical-align: -3px;
+  color: var(--accent);
+}
