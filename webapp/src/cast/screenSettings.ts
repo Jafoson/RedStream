@@ -1,5 +1,6 @@
 // Per-browser screen-mode settings (Settings → Bildschirm).
 import { detectTvFromUA } from '../tv/detectTv'
+import { computeMobileView } from '../mobile/view'
 
 const ENABLED_KEY = 'rstv_screen_enabled'
 const NAME_KEY = 'rstv_screen_name'
@@ -22,8 +23,11 @@ function write(key: string, value: string | null): void {
   }
 }
 
+/** On unless switched off — except in the phone view, where the phone is
+ * the remote control and only becomes a screen when switched on. */
 export function isScreenEnabled(): boolean {
-  return read(ENABLED_KEY) !== '0'
+  const v = read(ENABLED_KEY)
+  return v === null ? !computeMobileView() : v !== '0'
 }
 
 export function setScreenEnabled(on: boolean): void {
@@ -34,6 +38,7 @@ export function setScreenEnabled(on: boolean): void {
 export function defaultScreenName(): string {
   const ua = navigator.userAgent
   if (detectTvFromUA(ua)) return 'Fernseher'
+  if (/iPhone/.test(ua)) return 'iPhone'
   const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : ''
   return os ? `Browser (${os})` : 'Browser'
 }

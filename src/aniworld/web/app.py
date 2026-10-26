@@ -113,6 +113,7 @@ _STATIC_MIME_TYPES = (
     (".svg", "image/svg+xml"),
     (".webp", "image/webp"),
     (".woff2", "font/woff2"),
+    (".webmanifest", "application/manifest+json"),
 )
 for _ext, _mime in _STATIC_MIME_TYPES:
     mimetypes.add_type(_mime, _ext)

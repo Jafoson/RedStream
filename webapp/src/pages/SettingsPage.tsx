@@ -13,6 +13,7 @@ import { useFocusEngine, useRegisterNav } from '../tv/FocusEngine'
 import { useAutoScrollRow } from '../tv/alignRow'
 import { useIsTv } from '../tv/useIsTv'
 import { getTvOverride, setTvOverride, detectTvFromUA } from '../tv/detectTv'
+import { isPhoneDevice, setViewOverride } from '../mobile/view'
 import './SettingsPage.css'
 
 function formatBytes(bytes: number): string {
@@ -63,8 +64,11 @@ export function SettingsPage() {
       return !on
     })
 
+  // Only on a phone that was switched to this (TV) layout: the way back.
+  const [phone] = useState(isPhoneDevice)
+
   useRegisterNav(
-    [1, 1, 1, 1, 1, 1],
+    phone ? [1, 1, 1, 1, 1, 1, 1] : [1, 1, 1, 1, 1, 1],
     (row) => {
       if (row === 0) cycleTvOverride()
       else if (row === 1) toggleDirectStream()
@@ -72,6 +76,7 @@ export function SettingsPage() {
       else if (row === 3) nameInputRef.current?.focus()
       else if (row === 4) logout()
       else if (row === 5) navigate('/verwaltung')
+      else if (row === 6) setViewOverride(null)
     },
     [],
   )
@@ -130,6 +135,16 @@ export function SettingsPage() {
           >
             TV-Modus: {isTv ? 'An' : 'Aus'} ({tvModeLabel()})
           </button>
+          {phone && (
+            <button
+              type="button"
+              className={'btn btn-ghost row-anchor' + (focus.region === 'content' && focus.row === 6 ? ' is-foc' : '')}
+              data-row="6"
+              onClick={() => setViewOverride(null)}
+            >
+              Zur Handy-Ansicht wechseln
+            </button>
+          )}
         </div>
       </section>
 

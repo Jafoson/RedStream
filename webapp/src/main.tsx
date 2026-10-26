@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App.tsx'
 import { AuthProvider } from './context/AuthContext.tsx'
 import { applyTvAttribute } from './tv/detectTv.ts'
+import { applyMobileAttribute } from './mobile/view.ts'
 import './styles/theme.css'
 import './styles/global.css'
 
@@ -12,6 +13,7 @@ import './styles/global.css'
 // React's initial commit) so a real TV browser never flashes non-TV sizing
 // for a frame before GridPage's [data-tv]-scoped CSS takes effect.
 applyTvAttribute()
+applyMobileAttribute()
 
 const queryClient = new QueryClient({
   defaultOptions: {

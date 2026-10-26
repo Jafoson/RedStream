@@ -13,6 +13,8 @@ import { ToastProvider } from './tv/ToastContext'
 import { PlayerPage } from './pages/PlayerPage'
 import { AdminPage } from './pages/AdminPage'
 import { CastReceiver } from './cast/CastReceiver'
+import { MobileApp } from './mobile/MobileApp'
+import { useMobileView } from './mobile/view'
 // Deliberately a plain eager import, not React.lazy() — hls.js's ~700kB is
 // still code-split (see HlsPlayer.tsx's own dynamic import('hls.js')), but
 // wrapping this whole route in Suspense measurably delayed React's commit
@@ -23,6 +25,7 @@ import { CastReceiver } from './cast/CastReceiver'
 
 function AppBody() {
   const { state } = useAuth()
+  const mobile = useMobileView()
 
   if (state === 'bootstrapping') {
     return (
@@ -34,6 +37,16 @@ function AppBody() {
 
   if (state === 'web-access') return <WebAccessPage />
   if (state === 'needs-profile') return <ProfileSelectPage />
+
+  // Phones get the layout of the native apps (mobile/), everything else the TV layout.
+  if (mobile) {
+    return (
+      <>
+        <CastReceiver />
+        <MobileApp />
+      </>
+    )
+  }
 
   return (
     <>

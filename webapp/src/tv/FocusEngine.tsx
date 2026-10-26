@@ -285,6 +285,9 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (suspendedRef.current) return
+      // The phone view (mobile/) is touch-only and has its own forms — no
+      // D-pad navigation there, and Enter must keep submitting them.
+      if (document.documentElement.dataset.mobile === 'true') return
       const key = normalizeArrowKey(e)
       if (key === 'Escape' || key === 'Backspace') {
         // Only intercept Backspace as "back" outside of text inputs — typing
