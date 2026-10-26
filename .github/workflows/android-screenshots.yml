@@ -3,6 +3,10 @@ name: Android Screenshots
 # Runs the Android app on an emulator against a demo backend
 # (android/ci/demo_server.py) and takes screenshots of every screen.
 on:
+  push:
+    paths:
+      - 'android/ci/**'
+      - '.github/workflows/android-screenshots.yml'
   workflow_dispatch:
 
 jobs:
