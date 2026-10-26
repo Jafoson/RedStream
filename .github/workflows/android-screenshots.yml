@@ -9,6 +9,9 @@ on:
       - '.github/workflows/android-screenshots.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   screenshots:
     runs-on: ubuntu-latest
@@ -66,7 +69,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: adb install -r android/app/build/outputs/apk/debug/app-debug.apk && python android/ci/drive.py shots
+          script: adb install -r android/app/build/outputs/apk/debug/app-debug.apk && python android/ci/drive.py shots 2>&1 | tee drive.log
 
       - name: Screenshots into the log
         if: always()
@@ -81,3 +84,18 @@ jobs:
         with:
           name: android-screenshots
           path: shots/*.png
+
+      # Screenshots also go into a standalone tag (one orphan commit, no
+      # branch history touched), for clients that can fetch git refs but
+      # not the artifact store.
+      - name: Publish screenshots tag
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pub" && cp shots/*.png "$RUNNER_TEMP/pub/" || true
+          cp drive.log "$RUNNER_TEMP/pub/" 2>/dev/null || true
+          cd "$RUNNER_TEMP/pub"
+          git init -q && git add -A
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "Android screenshots, run ${{ github.run_number }} (${{ github.sha }})"
+          git push -f "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}" HEAD:refs/tags/ci-screenshots
