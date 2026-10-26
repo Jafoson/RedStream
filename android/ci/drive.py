@@ -203,7 +203,9 @@ def search():
     time.sleep(1)
     tap(wait_for("Titel suchen"))
     type_text("o")
-    key(66)  # enter
+    key(111)  # hide keyboard; a hardware Enter would also move focus on to the cast button
+    time.sleep(1)
+    tap_text("Anime", exact=True)  # a site chip starts the search too
     time.sleep(4)
     shot("12_suche")
 
