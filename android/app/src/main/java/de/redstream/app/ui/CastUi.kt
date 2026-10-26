@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Pause
@@ -32,6 +34,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.redstream.app.AppState
+import de.redstream.app.CastController
 import de.redstream.app.data.Screen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -86,13 +90,36 @@ fun CastSheet(app: AppState, onDismiss: () -> Unit) {
             delay(3000)
         }
     }
+    // Google Cast devices are only searched for while the sheet is open.
+    DisposableEffect(Unit) {
+        app.cast.gcast.startDiscovery()
+        onDispose { app.cast.gcast.stopDiscovery() }
+    }
     val myProfile = app.prefs.profileId
-    val current = app.cast.target?.id
+    val target = app.cast.target
+    val current = target?.takeIf { it.kind == CastController.Kind.SCREEN }?.id
+    val gcastDevices = app.cast.gcast.devices
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = RS.panel) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp).navigationBarsPadding()) {
             Text("Abspielen auf", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(bottom = 12.dp))
-            TargetRow(Icons.Filled.PhoneAndroid, "Dieses Handy", "Direkt hier abspielen", selected = current == null) {
+            TargetRow(Icons.Filled.PhoneAndroid, "Dieses Handy", "Direkt hier abspielen", selected = target == null) {
                 app.cast.select(null); onDismiss()
+            }
+            val connectedName = app.cast.gcast.connected
+            if (connectedName != null && gcastDevices.none { it.name == connectedName }) {
+                TargetRow(Icons.Filled.CastConnected, connectedName, "Google Cast · verbunden", selected = true) { onDismiss() }
+            }
+            gcastDevices.forEach { d ->
+                val isConnected = d.name == connectedName
+                TargetRow(
+                    if (isConnected) Icons.Filled.CastConnected else Icons.Filled.Cast,
+                    d.name,
+                    "Google Cast" + (if (isConnected) " · verbunden" else d.description?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                    selected = isConnected,
+                ) {
+                    if (!isConnected) app.cast.connectGcast(d)
+                    onDismiss()
+                }
             }
             val list = screens
             when {
@@ -100,11 +127,11 @@ fun CastSheet(app: AppState, onDismiss: () -> Unit) {
                     CircularProgressIndicator(Modifier.size(24.dp))
                 }
                 error != null -> Text("Fernseher konnten nicht geladen werden: $error", color = RS.error, modifier = Modifier.padding(8.dp))
-                list.isNullOrEmpty() -> Muted(
+                list.isNullOrEmpty() && gcastDevices.isEmpty() -> Muted(
                     "Kein Fernseher online. Öffne RedStream im Browser des Fernsehers – unter Einstellungen → Bildschirm muss „Als Bildschirm verfügbar“ an sein.",
                     Modifier.padding(8.dp),
                 )
-                else -> list.sortedByDescending { it.profile_id == myProfile }.forEach { s ->
+                else -> list.orEmpty().sortedByDescending { it.profile_id == myProfile }.forEach { s ->
                     val sameProfile = s.profile_id != null && s.profile_id == myProfile
                     TargetRow(
                         Icons.Filled.Tv,
@@ -142,7 +169,7 @@ private fun TargetRow(icon: ImageVector, title: String, subtitle: String, select
 fun RemoteBar(app: AppState, onOpenSheet: () -> Unit) {
     val target = app.cast.target ?: return
     val scope = rememberCoroutineScope()
-    LaunchedEffect(target.id) {
+    LaunchedEffect(target.id, target.kind) {
         while (true) {
             app.cast.refreshTarget()
             delay(2000)
@@ -163,7 +190,12 @@ fun RemoteBar(app: AppState, onOpenSheet: () -> Unit) {
                 )
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Tv, null, tint = RS.accent, modifier = Modifier.padding(horizontal = 6.dp))
+                Icon(
+                    if (target.kind == CastController.Kind.GCAST) Icons.Filled.CastConnected else Icons.Filled.Tv,
+                    null,
+                    tint = RS.accent,
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                )
                 Column(Modifier.weight(1f).clickable(onClick = onOpenSheet)) {
                     Text(target.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     val line = when {

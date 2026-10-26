@@ -16,10 +16,10 @@ enum class Stage { SETUP, PROFILE, READY }
 class AppState(context: Context) {
     val prefs = Prefs(context.applicationContext)
     val api = Api(prefs)
-    val cast = CastController(api, prefs)
-
     /** Outlives single screens — e.g. the player's last progress save. */
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    val cast = CastController(context.applicationContext, api, prefs, scope)
 
     var stage by mutableStateOf(computeStage())
         private set

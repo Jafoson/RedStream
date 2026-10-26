@@ -190,6 +190,10 @@ class Api(private val prefs: Prefs) {
         return parsed.encodedPath + (parsed.encodedQuery?.let { "?$it" } ?: "")
     }
 
+    /** Login-free, short-lived URL (path) for a downloaded episode — for a Cast device (web/share.py). */
+    suspend fun share(streamPath: String): String =
+        post<StreamResponse>("/api/share", buildJsonObject { put("path", streamPath) }).url
+
     suspend fun liveStream(episodeUrl: String, language: String?, provider: String?): LiveStream =
         post("/api/live/resolve", buildJsonObject {
             put("episode_url", episodeUrl); language?.let { put("language", it) }; provider?.let { put("provider", it) }

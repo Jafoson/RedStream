@@ -1,5 +1,6 @@
 package de.redstream.app
 
+import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -7,50 +8,120 @@ import de.redstream.app.data.Api
 import de.redstream.app.data.PlayItem
 import de.redstream.app.data.Prefs
 import de.redstream.app.data.Screen
+import de.redstream.app.data.ScreenState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * "Auf TV abspielen": which TV (a browser running the web app, see
- * web/cast.py) is the playback target, and remote control for it.
- * No target selected = play on this phone.
+ * "Auf TV abspielen": which TV is the playback target, and remote control
+ * for it. Two kinds of TV:
+ * - a RedStream screen: a browser running the web app (see web/cast.py),
+ *   controlled through the server; remembered across launches;
+ * - a Google Cast device (Chromecast, Android TV), see [GoogleCast].
+ * No target = play on this phone.
  */
-class CastController(private val api: Api, private val prefs: Prefs) {
+class CastController(context: Context, private val api: Api, private val prefs: Prefs, scope: CoroutineScope) {
 
-    data class Target(val id: String, val name: String)
+    enum class Kind { SCREEN, GCAST }
 
-    var target by mutableStateOf(
+    data class Target(val id: String, val name: String, val kind: Kind = Kind.SCREEN)
+
+    val gcast = GoogleCast(context)
+
+    private var screenTarget by mutableStateOf(
         prefs.castScreenId?.let { Target(it, prefs.castScreenName ?: "Fernseher") }
     )
-        private set
 
-    /** Latest heartbeat of [target] (null while unknown / offline). */
-    var targetScreen by mutableStateOf<Screen?>(null)
-        private set
+    /** A connected Cast device wins over the remembered screen. */
+    val target: Target?
+        get() = gcast.connected?.let { Target("gcast", it, Kind.GCAST) } ?: screenTarget
 
-    var targetOffline by mutableStateOf(false)
-        private set
+    private var screenState by mutableStateOf<Screen?>(null)
+    private var screenOffline by mutableStateOf(false)
+
+    /** What the Cast device plays (it only knows a URL and a title). */
+    private var gcastItem by mutableStateOf<PlayItem?>(null)
+
+    /** Latest state of [target] for the remote bar (null while unknown). */
+    val targetScreen: Screen?
+        get() = gcast.connected?.let { name ->
+            val item = gcastItem
+            Screen(
+                id = "gcast",
+                name = name,
+                state = ScreenState(
+                    status = if (item == null) "idle" else gcast.playerState,
+                    series_title = item?.seriesTitle,
+                    season = item?.season,
+                    episode_number = item?.episodeNumber,
+                    position = gcast.position,
+                    duration = gcast.duration,
+                ),
+            )
+        } ?: screenState
+
+    val targetOffline: Boolean get() = gcast.connected == null && screenOffline
+
+    init {
+        // A Cast device doesn't report to the server — save its progress from here.
+        scope.launch {
+            while (true) {
+                delay(10_000)
+                val item = gcastItem ?: continue
+                if (gcast.connected == null || gcast.playerState != "playing" || gcast.duration <= 0) continue
+                runCatching {
+                    api.saveProgress(item, gcast.position, gcast.duration, gcast.position / gcast.duration >= 0.9)
+                }
+            }
+        }
+    }
 
     fun select(screen: Screen?) {
-        target = screen?.let { Target(it.id, it.name) }
-        targetScreen = screen
-        targetOffline = false
+        if (gcast.connected != null) gcast.disconnect()
+        screenTarget = screen?.let { Target(it.id, it.name) }
+        screenState = screen
+        screenOffline = false
         prefs.castScreenId = screen?.id
         prefs.castScreenName = screen?.name
     }
 
+    fun connectGcast(device: GoogleCast.Device) {
+        screenTarget = null
+        prefs.castScreenId = null
+        prefs.castScreenName = null
+        gcast.connect(device)
+    }
+
     suspend fun screens(): List<Screen> = api.screens()
 
-    /** Refreshes [targetScreen]; called periodically while the app is open. */
+    /** Refreshes a RedStream screen's state; called periodically while the remote bar shows. */
     suspend fun refreshTarget() {
-        val t = target ?: return
+        val t = screenTarget ?: return
+        if (gcast.connected != null) return
         val match = runCatching { api.screens() }.getOrNull()?.firstOrNull { it.id == t.id }
-        targetScreen = match
-        targetOffline = match == null
+        screenState = match
+        screenOffline = match == null
     }
 
     suspend fun play(item: PlayItem) {
-        val t = target ?: error("Kein Fernseher ausgewählt")
+        if (gcast.connected != null) {
+            val url = loginFreeUrl(item)
+            val resume = runCatching { api.episodeProgress(item.episodeUrl) }.getOrNull()?.let { p ->
+                p.position_seconds.takeIf { !p.completed && it > 30 && it < p.duration_seconds - 10 }
+            } ?: 0.0
+            gcastItem = item
+            gcast.load(
+                url,
+                item.seriesTitle,
+                "S%02dE%02d".format(item.season, item.episodeNumber) + (item.episodeTitle?.let { " · $it" } ?: ""),
+                resume,
+            )
+            return
+        }
+        val t = screenTarget ?: error("Kein Fernseher ausgewählt")
         api.castCommand(t.id, buildJsonObject {
             put("type", "play")
             put("episode_url", item.episodeUrl)
@@ -65,21 +136,42 @@ class CastController(private val api: Api, private val prefs: Prefs) {
         })
     }
 
-    suspend fun toggle() = simple("toggle")
-    suspend fun stop() = simple("stop")
+    /**
+     * A URL the TV can fetch without logging in: a /api/share URL for a
+     * downloaded episode, else the direct-stream relay.
+     */
+    private suspend fun loginFreeUrl(item: PlayItem): String {
+        var folder = item.folder
+        if (folder == null) {
+            runCatching {
+                val season = api.seasons(item.seriesUrl).firstOrNull { it.season_number == item.season }
+                val ep = season?.let { s -> api.episodes(s.url).firstOrNull { it.url == item.episodeUrl || it.episode_number == item.episodeNumber } }
+                if (ep?.downloaded == true) folder = ep.folder
+            }
+        }
+        folder?.let { f ->
+            runCatching { api.share(api.downloadedStream(f, item.season, item.episodeNumber)) }.getOrNull()?.let { path ->
+                return api.absolute(path)!!
+            }
+        }
+        val live = api.liveStream(item.episodeUrl, item.language, item.provider)
+        return api.absolute(live.url)!!
+    }
+
+    suspend fun toggle() = if (gcast.connected != null) gcast.toggle() else simple("toggle")
+    suspend fun stop() = if (gcast.connected != null) gcast.stop() else simple("stop")
 
     suspend fun seekBy(seconds: Int) {
-        val t = target ?: return
+        if (gcast.connected != null) {
+            gcast.seekBy(seconds)
+            return
+        }
+        val t = screenTarget ?: return
         api.castCommand(t.id, buildJsonObject { put("type", "seek"); put("delta", seconds) })
     }
 
-    suspend fun seekTo(seconds: Double) {
-        val t = target ?: return
-        api.castCommand(t.id, buildJsonObject { put("type", "seek"); put("position", seconds) })
-    }
-
     private suspend fun simple(type: String) {
-        val t = target ?: return
+        val t = screenTarget ?: return
         api.castCommand(t.id, buildJsonObject { put("type", type) })
     }
 }
