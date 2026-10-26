@@ -15,9 +15,11 @@ export interface GCastStatus {
   state: 'idle' | 'loading' | 'playing' | 'paused' | 'buffering'
   position: number
   duration: number
+  /** URL of what the device is playing (identifies the queue item). */
+  contentId: string | null
 }
 
-let status: GCastStatus = { available: false, device: null, state: 'idle', position: 0, duration: 0 }
+let status: GCastStatus = { available: false, device: null, state: 'idle', position: 0, duration: 0, contentId: null }
 let player: any = null
 let controller: any = null
 const listeners = new Set<(s: GCastStatus) => void>()
@@ -45,7 +47,7 @@ function refreshFromPlayer() {
   const ps = player.playerState as string | null
   const state: GCastStatus['state'] =
     ps === 'PLAYING' ? 'playing' : ps === 'PAUSED' ? 'paused' : ps === 'BUFFERING' ? 'buffering' : player.isMediaLoaded ? 'loading' : 'idle'
-  emit({ state, position: player.currentTime || 0, duration: player.duration || 0 })
+  emit({ state, position: player.currentTime || 0, duration: player.duration || 0, contentId: player.mediaInfo?.contentId ?? null })
 }
 
 let started = false
@@ -69,7 +71,7 @@ export function initGoogleCast(): void {
     ctx.addEventListener(framework.CastContextEventType.SESSION_STATE_CHANGED, () => {
       const session = ctx.getCurrentSession()
       emit({ device: session ? session.getCastDevice().friendlyName || 'Chromecast' : null })
-      if (!session) emit({ state: 'idle', position: 0, duration: 0 })
+      if (!session) emit({ state: 'idle', position: 0, duration: 0, contentId: null })
     })
     player = new framework.RemotePlayer()
     controller = new framework.RemotePlayerController(player)
@@ -103,10 +105,8 @@ export interface GCastMedia {
   startTime: number
 }
 
-export async function loadGCastMedia(m: GCastMedia): Promise<void> {
+function mediaInfo(m: GCastMedia): any {
   const w = window as any
-  const session = cf()?.CastContext.getInstance().getCurrentSession()
-  if (!session) throw new Error('Kein Chromecast verbunden')
   const media = new w.chrome.cast.media.MediaInfo(m.url, 'application/x-mpegurl')
   media.streamType = w.chrome.cast.media.StreamType.BUFFERED
   // Our HLS (downloads and most hosters) is MPEG-TS.
@@ -117,11 +117,49 @@ export async function loadGCastMedia(m: GCastMedia): Promise<void> {
   meta.title = m.subtitle
   if (m.image) meta.images = [new w.chrome.cast.Image(m.image)]
   media.metadata = meta
-  const req = new w.chrome.cast.media.LoadRequest(media)
-  req.currentTime = m.startTime
-  req.autoplay = true
-  const err = await session.loadMedia(req)
-  if (err) throw new Error(String(err))
+  return media
+}
+
+function currentSession(): any {
+  const session = cf()?.CastContext.getInstance().getCurrentSession()
+  if (!session) throw new Error('Kein Chromecast verbunden')
+  return session
+}
+
+/**
+ * Plays `items[0]` from `m.startTime` with the rest queued behind it — the
+ * TV moves on to the next episode by itself, even with this phone gone.
+ */
+export function loadGCastQueue(items: GCastMedia[]): Promise<void> {
+  const w = window as any
+  const session = currentSession()
+  const queueItems = items.map((m) => {
+    const qi = new w.chrome.cast.media.QueueItem(mediaInfo(m))
+    qi.autoplay = true
+    qi.startTime = m.startTime
+    qi.preloadTime = 20
+    return qi
+  })
+  const req = new w.chrome.cast.media.QueueLoadRequest(queueItems)
+  req.startIndex = 0
+  return new Promise((resolve, reject) => session.getSessionObj().queueLoad(req, () => resolve(), (e: unknown) => reject(new Error(String((e as { description?: string })?.description ?? e)))))
+}
+
+/** Adds an episode at the end of the device's queue. */
+export function appendGCast(m: GCastMedia): Promise<void> {
+  const w = window as any
+  const media = currentSession().getMediaSession()
+  if (!media) return Promise.reject(new Error('Keine Wiedergabe'))
+  const qi = new w.chrome.cast.media.QueueItem(mediaInfo(m))
+  qi.autoplay = true
+  qi.preloadTime = 20
+  return new Promise((resolve, reject) => media.queueAppendItem(qi, () => resolve(), (e: unknown) => reject(new Error(String(e)))))
+}
+
+/** Skips to the next queued episode. */
+export function gcastNext(): void {
+  const media = cf()?.CastContext.getInstance().getCurrentSession()?.getMediaSession()
+  media?.queueNext(() => {}, () => {})
 }
 
 export function gcastToggle(): void {

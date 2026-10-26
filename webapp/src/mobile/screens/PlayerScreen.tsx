@@ -14,6 +14,10 @@ import type { PlayItem } from '../types'
 import { resolveStream, type ResolvedStream } from '../resolve'
 
 const RESUME_MIN_SECONDS = 30
+// Same as the TV/desktop player (PlayerControls): the "Nächste Folge" card
+// shows once 40 s are left and jumps after a 10 s countdown.
+const AUTO_ADVANCE_THRESHOLD_S = 40
+const AUTO_ADVANCE_COUNTDOWN_S = 10
 // Safari plays HLS itself — used there instead of hls.js because only
 // native playback can go to an Apple TV (AirPlay).
 const NATIVE_HLS =
@@ -30,6 +34,8 @@ export function PlayerScreen() {
   const [item, setItem] = useState<PlayItem | null>(initial)
   const [load, setLoad] = useState({ key: 0, startAt: null as number | null, allowDownloaded: true })
   const [resolved, setResolved] = useState<ResolvedStream | null>(null)
+  const resolvedRef = useRef(resolved)
+  resolvedRef.current = resolved
   const [error, setError] = useState<string | null>(null)
   const [languages, setLanguages] = useState<string[]>([])
   const [controls, setControls] = useState(true)
@@ -38,6 +44,10 @@ export function PlayerScreen() {
   const [time, setTime] = useState({ current: 0, duration: 0 })
   const [scrub, setScrub] = useState<number | null>(null)
   const [airplay, setAirplay] = useState(false)
+  // Auto-advance: armed once per episode; null countdown = not counting.
+  const [nextCard, setNextCard] = useState(false)
+  const [countdown, setCountdown] = useState<number | null>(null)
+  const nextCancelledRef = useRef(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const itemRef = useRef(item)
@@ -68,6 +78,18 @@ export function PlayerScreen() {
       completed: done,
     }).catch(() => {})
   }, [])
+
+  /** Finish this episode and start the next one (end, countdown or button). */
+  const goNext = useCallback(() => {
+    const next = resolvedRef.current?.next
+    if (!next) return
+    save(true)
+    setNextCard(false)
+    setCountdown(null)
+    nextCancelledRef.current = false
+    setItem(next)
+    setLoad((l) => ({ key: l.key + 1, startAt: null, allowDownloaded: true }))
+  }, [save])
 
   // Resolve + start the current item.
   useEffect(() => {
@@ -137,13 +159,7 @@ export function PlayerScreen() {
       resumeRef.current = null
       v.play().catch(() => setPlaying(false))
     }
-    const onEnded = () => {
-      save(true)
-      if (resolved.next) {
-        setItem(resolved.next)
-        setLoad((l) => ({ key: l.key + 1, startAt: null, allowDownloaded: true }))
-      }
-    }
+    const onEnded = () => goNext()
     v.addEventListener('timeupdate', onTime)
     v.addEventListener('durationchange', onTime)
     v.addEventListener('play', onPlay)
@@ -158,7 +174,32 @@ export function PlayerScreen() {
       v.removeEventListener('loadedmetadata', onMeta)
       v.removeEventListener('ended', onEnded)
     }
-  }, [resolved, save, scheduleHide])
+  }, [resolved, save, scheduleHide, goNext])
+
+  // Arm the "Nächste Folge" card + countdown near the end (reset when
+  // seeking back out of the window).
+  const remaining = time.duration > 0 ? time.duration - time.current : Infinity
+  const inWindow = !!resolved?.next && !error && remaining <= AUTO_ADVANCE_THRESHOLD_S
+  useEffect(() => {
+    if (inWindow && !nextCard) {
+      setNextCard(true)
+      if (!nextCancelledRef.current) setCountdown(AUTO_ADVANCE_COUNTDOWN_S)
+    } else if (!inWindow && nextCard) {
+      setNextCard(false)
+      setCountdown(null)
+      nextCancelledRef.current = false
+    }
+  }, [inWindow, nextCard])
+
+  useEffect(() => {
+    if (countdown === null) return
+    if (countdown <= 0) {
+      goNext()
+      return
+    }
+    const t = setTimeout(() => setCountdown((c) => (c !== null ? c - 1 : null)), 1000)
+    return () => clearTimeout(t)
+  }, [countdown, goNext])
 
   // AirPlay (Safari): offer the button while an Apple TV is reachable.
   useEffect(() => {
@@ -268,6 +309,34 @@ export function PlayerScreen() {
               Schließen
             </button>
           </div>
+        </div>
+      )}
+
+      {nextCard && resolved?.next && !error && (
+        <div className="m-nextcard">
+          <div className="m-nextcard__text">
+            <span className="m-dim">Nächste Folge{countdown !== null ? ` in ${countdown} s` : ''}</span>
+            <strong>
+              {epCode(resolved.next.season, resolved.next.episodeNumber)}
+              {resolved.next.episodeTitle ? ` · ${resolved.next.episodeTitle}` : ''}
+            </strong>
+          </div>
+          {countdown !== null && (
+            <button
+              type="button"
+              className="m-btn m-btn--ghost"
+              onClick={() => {
+                nextCancelledRef.current = true
+                setCountdown(null)
+              }}
+            >
+              Abbrechen
+            </button>
+          )}
+          <button type="button" className="m-btn m-btn--primary" onClick={goNext}>
+            <MIcon name="play" size={20} />
+            Jetzt ansehen
+          </button>
         </div>
       )}
 

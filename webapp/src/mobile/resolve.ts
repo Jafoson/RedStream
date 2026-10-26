@@ -34,6 +34,11 @@ async function lookupSeason(item: PlayItem) {
   return { ep: eps[idx], next }
 }
 
+/** The episode after `item` in the same season (no stream resolving). */
+export async function findNextEpisode(item: PlayItem): Promise<PlayItem | null> {
+  return (await lookupSeason(item).catch(() => ({ next: null }))).next
+}
+
 /**
  * `loginFree`: the URL must work without the Authorization header (a TV
  * fetching it, or Safari's native HLS) — downloaded episodes then get a
