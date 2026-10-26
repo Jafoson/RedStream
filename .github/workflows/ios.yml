@@ -1,0 +1,71 @@
+name: Build iOS App
+
+# Unsigned build (no Apple developer account): the .ipa is meant for
+# sideloading with AltStore / Sideloadly, which sign it with the user's
+# own Apple ID on install.
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Create a GitHub release with the IPA'
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: 'Version name (e.g. 1.0.0)'
+        required: false
+        type: string
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build
+        run: |
+          xcodebuild -project RedStream.xcodeproj -scheme RedStream -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            MARKETING_VERSION="${{ inputs.version || '1.0.0' }}" CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tee build.log | grep -E "error:|warning: .*(deprecated|will be an error)|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/Build/Products/Release-iphoneos/RedStream.app
+
+      - name: Package IPA
+        run: |
+          mkdir -p dist/Payload
+          cp -R build/Build/Products/Release-iphoneos/RedStream.app dist/Payload/
+          cd dist && zip -qry "RedStream-${{ inputs.version || '1.0.0' }}-${{ github.run_number }}.ipa" Payload && rm -rf Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RedStream-ipa
+          path: ios/dist/*.ipa
+
+      - name: Release
+        if: ${{ inputs.release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-v${{ inputs.version }}
+          name: RedStream iOS ${{ inputs.version }}
+          files: ios/dist/*.ipa
+          target_commitish: ${{ github.sha }}
+          body: |
+            Unsignierte iOS-App (kein Apple-Developer-Account). Installation per
+            [AltStore](https://altstore.io) oder [Sideloadly](https://sideloadly.io) mit deiner Apple-ID.

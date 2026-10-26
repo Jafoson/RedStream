@@ -1,0 +1,77 @@
+name: iOS Screenshots
+
+# Runs the iOS app in the simulator against the demo backend
+# (android/ci/demo_server.py) via a UI test that screenshots every screen.
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-screenshots.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  screenshots:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install backend
+        run: |
+          brew install ffmpeg xcodegen
+          pip install -e . Pillow
+
+      - name: Start demo backend
+        run: |
+          mkdir -p "$RUNNER_TEMP/rshome"
+          HOME="$RUNNER_TEMP/rshome" nohup python android/ci/demo_server.py "$RUNNER_TEMP/rsdemo" > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 90); do
+            curl -sf http://127.0.0.1:8080/api/auth/check > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8080/api/cast/screens
+          HOME="$RUNNER_TEMP/rshome" nohup python ios/ci/auto_approve.py > "$RUNNER_TEMP/approve.log" 2>&1 &
+
+      - name: Run UI test
+        working-directory: ios
+        run: |
+          xcodegen generate
+          SIM=$(xcrun simctl list devices available | grep -E "^\s+iPhone 16 \(" | head -1 | sed -E 's/.*\(([0-9A-F-]+)\).*/\1/')
+          echo "Simulator: $SIM"
+          TEST_RUNNER_SHOTS_DIR="$GITHUB_WORKSPACE/shots" xcodebuild test -project RedStream.xcodeproj -scheme RedStream \
+            -destination "id=$SIM" -derivedDataPath build CODE_SIGNING_ALLOWED=NO \
+            | tee test.log | grep -E "error:|Test Case|XCTAssert|failed|passed|TEST (SUCCEEDED|FAILED)" || true
+
+      - name: Logs
+        if: always()
+        run: |
+          tail -50 "$RUNNER_TEMP/server.log"; cat "$RUNNER_TEMP/approve.log"
+          grep -E "error:" ios/test.log | head -50 || true
+          ls -la shots || true
+
+      # Same delivery as the Android run: a standalone tag with the PNGs.
+      - name: Publish screenshots tag
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pub" && cp shots/*.png "$RUNNER_TEMP/pub/" || true
+          grep -E "error:|Test Case|failed|XCTAssert" ios/test.log > "$RUNNER_TEMP/pub/test.log" 2>/dev/null || true
+          tail -300 ios/test.log > "$RUNNER_TEMP/pub/test-tail.log" 2>/dev/null || true
+          cd "$RUNNER_TEMP/pub"
+          git init -q && git add -A
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "iOS screenshots, run ${{ github.run_number }} (${{ github.sha }})"
+          git push -f "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}" HEAD:refs/tags/ci-screenshots-ios
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-screenshots
+          path: shots/*.png

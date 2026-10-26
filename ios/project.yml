@@ -1,0 +1,43 @@
+# Xcode project definition; CI generates RedStream.xcodeproj from it with
+# XcodeGen (`xcodegen generate`), so no .xcodeproj is checked in.
+name: RedStream
+options:
+  bundleIdPrefix: de.redstream
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  RedStream:
+    type: application
+    platform: iOS
+    sources: [RedStream]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.redstream.app
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: RedStream/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+  RedStreamUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [RedStreamUITests]
+    dependencies:
+      - target: RedStream
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: de.redstream.app.uitests
+schemes:
+  RedStream:
+    build:
+      targets:
+        RedStream: all
+        RedStreamUITests: [test]
+    test:
+      targets: [RedStreamUITests]

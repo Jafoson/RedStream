@@ -1,0 +1,4 @@
+RedStream.xcodeproj/
+build/
+dist/
+*.log
