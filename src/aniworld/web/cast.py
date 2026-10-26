@@ -6,6 +6,10 @@ Android app lists the screens that are online and queues commands for one
 (play an episode, pause/resume, seek, stop); the screen picks them up with
 its next heartbeat. Everything lives in memory: after a server restart the
 screens simply re-register with their next heartbeat.
+
+Chromecast / Android TV devices the server finds itself (chromecast.py) are
+listed here too (ids ``gc-…``, ``kind: "chromecast"``) and take the same
+commands — the server casts to them directly, so any client can use them.
 """
 
 import secrets
@@ -46,6 +50,7 @@ def _public(screen_id, screen, now, profiles):
         "name": screen["name"],
         "profile_id": screen["profile_id"],
         "profile_name": profiles.get(screen["profile_id"]),
+        "kind": "browser",
         "online": now - screen["last_seen"] <= ONLINE_SECONDS,
         "seconds_since_seen": round(now - screen["last_seen"], 1),
         "state": screen["state"],
@@ -105,6 +110,9 @@ def screens():
             if now - s["last_seen"] <= ONLINE_SECONDS
         ]
     listed.sort(key=lambda s: s["seconds_since_seen"])
+    from . import chromecast
+
+    listed.extend(chromecast.screens(profiles))
     return jsonify({"screens": listed})
 
 
@@ -128,6 +136,14 @@ def command(screen_id):
             return jsonify({"error": f"missing for play: {', '.join(missing)}"}), 400
     if kind == "seek" and data.get("position") is None and data.get("delta") is None:
         return jsonify({"error": "seek needs position or delta"}), 400
+
+    from . import chromecast
+
+    if chromecast.is_chromecast_id(screen_id):
+        error = chromecast.command(screen_id, data, _profile_id(), request.host_url)
+        if error:
+            return jsonify({"error": error}), 404 if "nicht gefunden" in error else 502
+        return jsonify({"ok": True})
 
     cmd = {k: v for k, v in data.items() if k != "type"}
     cmd.update(type=kind, id=secrets.token_hex(6), ts=time.time())

@@ -267,7 +267,7 @@ export function CastSheet() {
         )}
         {screens.isLoading && <Spinner />}
         {screens.isError && <p className="m-error-text">Fernseher konnten nicht geladen werden.</p>}
-        {screens.data && list.length === 0 && (
+        {screens.data && list.length === 0 && !cast.gcastAvailable && (
           <p className="m-muted m-pad">
             Kein Fernseher online. Öffne RedStream im Browser des Fernsehers – unter Einstellungen → Bildschirm muss „Als
             Bildschirm verfügbar“ an sein.
@@ -276,9 +276,11 @@ export function CastSheet() {
         {list.map((s) => (
           <TargetRow
             key={s.id}
-            icon="tv"
+            icon={s.kind === 'chromecast' ? 'cast' : 'tv'}
             title={s.name + (s.profile_id != null && s.profile_id === mine ? '  · dein Profil' : '')}
-            subtitle={(s.profile_name ? `Profil ${s.profile_name} · ` : '') + describe(s)}
+            subtitle={
+              (s.kind === 'chromecast' ? 'Chromecast · ' : '') + (s.profile_name ? `Profil ${s.profile_name} · ` : '') + describe(s)
+            }
             selected={cast.target?.kind === 'screen' && cast.target.id === s.id}
             onClick={() => {
               cast.select(s)

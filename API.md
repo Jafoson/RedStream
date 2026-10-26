@@ -750,7 +750,7 @@ Only registered while `ANIWORLD_ENABLE_WEBAPP=1`; everything is in memory.
 |---|---|---|
 | `POST /api/cast/heartbeat` | screen | Body `{ screen_id?, name, state }` (+ `X-Profile-ID`), every ~1.5 s. Registers the screen (unknown/missing `screen_id` → a new one is returned), stores its state (`status` idle/loading/playing/paused/buffering, episode fields, `position`, `duration`) and returns `{ screen_id, commands: [...] }` — each queued command exactly once. |
 | `DELETE /api/cast/screens/<id>` | screen | Screen mode switched off |
-| `GET /api/cast/screens` | controller | `{ screens: [{ id, name, profile_id, profile_name, online, seconds_since_seen, state }] }` — screens with a heartbeat in the last 10 s |
+| `GET /api/cast/screens` | controller | `{ screens: [{ id, name, kind, profile_id, profile_name, online, seconds_since_seen, state }] }` — screens with a heartbeat in the last 10 s (`kind: "browser"`), plus Chromecast / Android TV devices the server found itself (`kind: "chromecast"`, `id: "gc-…"`, `model`). Commands to a `gc-` id are executed by the server directly (it casts the episode, saves progress and moves on to the next episode by itself). |
 | `POST /api/cast/screens/<id>/command` | controller | `{ type: "play", episode_url, series_url, series_title, season, episode_number, episode_title?, language?, provider?, absolute_episode_number? }` (plays under the sender's `X-Profile-ID`), `{ type: "seek", position \| delta }`, or `{ type: "pause" \| "resume" \| "toggle" \| "stop" }`. `404` if the screen is offline; commands expire after 30 s. |
 
 ---

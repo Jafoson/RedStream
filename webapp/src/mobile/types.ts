@@ -25,6 +25,9 @@ export interface CastScreenState {
 export interface CastScreen {
   id: string
   name: string
+  /** 'chromecast': a Cast device the server plays on (web/chromecast.py). */
+  kind?: 'browser' | 'chromecast'
+  model?: string | null
   profile_id: number | null
   profile_name: string | null
   online: boolean

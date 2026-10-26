@@ -25,6 +25,7 @@ dependencies = [
   "patchright",                                                               # >=3.9
   "curl_cffi",                                                                # TLS impersonation for Cloudflare-gated hosters (VOE)
   "authlib",                                                                  # OIDC/SSO always wired up in web/auth.py, not optional here
+  "pychromecast",                                                             # server-side casting to Chromecast / Android TV (web/chromecast.py)
   'windows-curses<3.14; sys_platform == "win32" and python_version < "3.14"', # ??? - npyscreen on Windows
 ]
 

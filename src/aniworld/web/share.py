@@ -84,6 +84,11 @@ def create():
     playlist = _locate(unquote(path[len(_FILES_PREFIX):]))
     if playlist is None:
         return jsonify({"error": "Episode not found"}), 404
+    return jsonify({"url": share_playlist(playlist), "expires_in": TOKEN_SECONDS})
+
+
+def share_playlist(playlist):
+    """Token URL path (/api/share/<token>/<name>) for a playlist file."""
     now = time.time()
     token = secrets.token_urlsafe(18)
     with _lock:
@@ -92,7 +97,7 @@ def create():
         if len(_tokens) >= _MAX_TOKENS:
             del _tokens[min(_tokens, key=lambda t: _tokens[t]["expires"])]
         _tokens[token] = {"dir": str(playlist.parent), "expires": now + TOKEN_SECONDS}
-    return jsonify({"url": f"/api/share/{token}/{quote(playlist.name)}", "expires_in": TOKEN_SECONDS})
+    return f"/api/share/{token}/{quote(playlist.name)}"
 
 
 @share_bp.route("/<token>/<name>", methods=["GET", "HEAD"])
