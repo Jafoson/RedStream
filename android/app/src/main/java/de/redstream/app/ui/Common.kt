@@ -162,6 +162,13 @@ fun languageLabel(lang: String): String = when (lang) {
     else -> lang
 }
 
+/** Compact form for episode rows, where both sub variants would otherwise read "Japanisch". */
+fun shortLanguageLabel(lang: String): String = when (lang) {
+    "German Sub" -> "Untertitel DE"
+    "English Sub" -> "Untertitel EN"
+    else -> languageLabel(lang)
+}
+
 private val LANGUAGE_ORDER = listOf("German Dub", "German Sub", "English Sub", "English Dub")
 
 fun sortLanguages(langs: Collection<String>): List<String> =

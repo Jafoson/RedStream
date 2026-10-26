@@ -123,6 +123,8 @@ def cli(*args):
 # ── the walk-through ─────────────────────────────────────────────────────────
 
 def setup():
+    # Android's one-time "Viewing full screen" hint would cover the player.
+    adb("shell", "settings", "put", "secure", "immersive_mode_confirmations", "confirmed")
     adb("shell", "am", "start", "-n", f"{PKG}/.MainActivity")
     wait_for("Verbinden", 60)
     time.sleep(1)
@@ -175,6 +177,10 @@ def detail():
 def player():
     tap_text("Folge 4", exact=True)
     time.sleep(12)
+    hint = find("Got it", exact=True)
+    if hint:
+        tap(hint)
+        time.sleep(1)
     shot("08_player")
     adb("shell", "input", "tap", "1000", "500")
     time.sleep(1)

@@ -262,7 +262,7 @@ private fun EpisodeRow(ep: Episode, progress: ProgressEntry?, tvName: String?, o
                     progress?.completed == true -> Text("Gesehen", color = RS.accent, fontSize = 12.sp)
                     progress != null && progress.duration_seconds > 0 ->
                         Text("${(progress.position_seconds / progress.duration_seconds * 100).toInt()} % gesehen", color = RS.muted, fontSize = 12.sp)
-                    else -> Text(sortLanguages(ep.available_languages).joinToString(" · ") { languageLabel(it).substringBefore(" ·") }, color = RS.muted2, fontSize = 12.sp, maxLines = 1)
+                    else -> Text(sortLanguages(ep.available_languages).joinToString(" · ") { shortLanguageLabel(it) }, color = RS.muted2, fontSize = 12.sp, maxLines = 1)
                 }
             }
             if (progress != null && !progress.completed && progress.duration_seconds > 0) {
