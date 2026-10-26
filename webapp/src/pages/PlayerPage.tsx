@@ -15,9 +15,10 @@ import {
   type ThumbnailMeta,
 } from '../api/stream'
 import { enqueueDownload } from '../api/queue'
+import { getProviders, setSeriesLanguage } from '../api/series'
 import { findDownloadedFolder, getLibrary } from '../api/library'
 import { authHeaders } from '../api/client'
-import { AUTO_ADVANCE_THRESHOLD_S } from '../components/player/PlayerControls'
+import { AUTO_ADVANCE_THRESHOLD_S, sortLanguages } from '../components/player/PlayerControls'
 import { claimNavigation, releaseNavigation } from '../navigation/navigationGuard'
 import type { DownloadPlayState, PlayerState } from '../navigation/playerState'
 import './PlayerPage.css'
@@ -37,6 +38,8 @@ export function PlayerPage() {
   const [streamUrl, setStreamUrl] = useState<string | null>(null)
   const [skipTimes, setSkipTimes] = useState<SkipTimes | null>(null)
   const [thumbnails, setThumbnails] = useState<ThumbnailMeta | null>(null)
+  // Languages this episode exists in -> their providers (from /api/providers).
+  const [languageProviders, setLanguageProviders] = useState<Record<string, string[]>>({})
   const resumeAppliedRef = useRef(false)
   const resumePositionRef = useRef(0)
   const lastKnownRef = useRef({ time: 0, duration: 0 })
@@ -72,6 +75,11 @@ export function PlayerPage() {
         },
       )
     }
+
+    setLanguageProviders({})
+    getProviders(s.episodeUrl)
+      .then((p) => !cancelled && setLanguageProviders(p))
+      .catch(() => {})
 
     getSkipTimes(s.seriesTitle, s.episodeNumber)
       .then((t) => !cancelled && setSkipTimes(t))
@@ -391,6 +399,32 @@ export function PlayerPage() {
     releaseNavigation()
   }
 
+  // Switch this episode to another language: progress is saved by the
+  // tracking effect's cleanup when we leave, and picked up again as the
+  // resume position. The choice also becomes the series' language for this
+  // profile, so the following episodes continue in it.
+  function switchLanguage(language: string) {
+    if (!s || language === s.language || !claimNavigation()) return
+    const providers = languageProviders[language] ?? []
+    setSeriesLanguage(s.seriesUrl, language).catch(() => {})
+    const downloadState: DownloadPlayState = {
+      episodeUrl: s.episodeUrl,
+      seriesTitle: s.seriesTitle,
+      seriesUrl: s.seriesUrl,
+      season: s.season,
+      episodeNumber: s.episodeNumber,
+      episodeTitle: s.episodeTitle,
+      absoluteEpisodeNumber: s.absoluteEpisodeNumber,
+      language,
+      provider: providers.includes(s.provider) ? s.provider : providers[0] ?? s.provider,
+      customPathId: s.customPathId,
+      nextEpisode: s.nextEpisode,
+      languageSwitch: { previousLanguage: s.language },
+    }
+    navigate('/download-play', { replace: true, state: downloadState })
+    releaseNavigation()
+  }
+
   // A direct stream died (hoster dropped the connection, token expired,
   // segments in a format the browser can't play, …): fall back to the old
   // download-and-play path for this episode. Progress saved so far is
@@ -451,6 +485,9 @@ export function PlayerPage() {
         thumbnails={thumbnails}
         hasNext={!!s.nextEpisode}
         onNext={goToNext}
+        languages={sortLanguages(Object.keys(languageProviders))}
+        currentLanguage={s.language}
+        onLanguage={switchLanguage}
       />
     </div>
   )

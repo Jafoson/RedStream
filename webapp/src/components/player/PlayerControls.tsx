@@ -61,7 +61,35 @@ function fmt(sec: number): string {
   return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`
 }
 
-type FocusId = 'back' | 'fullscreen' | 'scrub' | 'rew' | 'play' | 'fwd' | 'volume' | 'next' | 'skip' | 'nextcard'
+type FocusId = 'back' | 'fullscreen' | 'scrub' | 'rew' | 'play' | 'fwd' | 'volume' | 'lang' | 'next' | 'skip' | 'nextcard'
+
+// Site language keys -> what the viewer actually hears/reads.
+const LANGUAGE_LABELS: Record<string, string> = {
+  'German Dub': 'Deutsch',
+  'English Dub': 'Englisch',
+  'German Sub': 'Japanisch · deutsche Untertitel',
+  'English Sub': 'Japanisch · englische Untertitel',
+}
+const LANGUAGE_SHORT: Record<string, string> = {
+  'German Dub': 'DE',
+  'English Dub': 'EN',
+  'German Sub': 'OmU DE',
+  'English Sub': 'OmU EN',
+}
+const LANGUAGE_ORDER = ['German Dub', 'German Sub', 'English Sub', 'English Dub']
+
+/** Fixed, meaningful menu order (the API's JSON object order is alphabetical). */
+export function sortLanguages(langs: string[]): string[] {
+  const rank = (l: string) => {
+    const i = LANGUAGE_ORDER.indexOf(l)
+    return i === -1 ? LANGUAGE_ORDER.length : i
+  }
+  return [...langs].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+}
+
+export function languageLabel(lang: string): string {
+  return LANGUAGE_LABELS[lang] ?? lang
+}
 
 const VOLUME_KEY = 'rstv_volume'
 function loadStoredVolume(): number {
@@ -84,6 +112,10 @@ export interface PlayerControlsProps {
   thumbnails?: ThumbnailMeta | null
   hasNext: boolean
   onNext: () => void
+  /** Languages this episode is available in (site keys, e.g. "German Dub"). */
+  languages?: string[]
+  currentLanguage?: string
+  onLanguage?: (language: string) => void
 }
 
 export function PlayerControls({
@@ -96,6 +128,9 @@ export function PlayerControls({
   thumbnails,
   hasNext,
   onNext,
+  languages = [],
+  currentLanguage,
+  onLanguage,
 }: PlayerControlsProps) {
   useSuspendFocusEngine()
 
@@ -123,6 +158,10 @@ export function PlayerControls({
   const [volume, setVolumeState] = useState(loadStoredVolume)
   const [muted, setMuted] = useState(false)
   const [volumeHover, setVolumeHover] = useState(false)
+  // Language menu: open/closed and which entry the D-pad highlight is on.
+  const [langMenu, setLangMenu] = useState(false)
+  const [langIndex, setLangIndex] = useState(0)
+  const hasLanguages = languages.length > 0 && !!onLanguage
 
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const seekingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -146,15 +185,33 @@ export function PlayerControls({
   const nextVisible = !buffering && hasNext && nextCardVisible
   const countdownActive = countdown !== null
 
-  const R = useRef({ focus, visible, skipVisible, nextVisible, hasNext, countdownActive })
-  R.current = { focus, visible, skipVisible, nextVisible, hasNext, countdownActive }
+  const R = useRef({ focus, visible, skipVisible, nextVisible, hasNext, countdownActive, langMenu, langIndex, languages, currentLanguage, onLanguage })
+  R.current = { focus, visible, skipVisible, nextVisible, hasNext, countdownActive, langMenu, langIndex, languages, currentLanguage, onLanguage }
 
-  const controlOrder: FocusId[] = hasNext ? ['rew', 'play', 'fwd', 'volume', 'next'] : ['rew', 'play', 'fwd', 'volume']
+  const controlOrder: FocusId[] = [
+    'rew',
+    'play',
+    'fwd',
+    'volume',
+    ...(hasLanguages ? (['lang'] as FocusId[]) : []),
+    ...(hasNext ? (['next'] as FocusId[]) : []),
+  ]
+
+  function openLangMenu() {
+    const i = Math.max(0, languages.indexOf(currentLanguage ?? ''))
+    setLangIndex(i)
+    setLangMenu(true)
+  }
+
+  function chooseLanguage(lang: string) {
+    setLangMenu(false)
+    if (lang !== currentLanguage) onLanguage?.(lang)
+  }
 
   const scheduleHide = useCallback(() => {
     if (hideTimer.current) clearTimeout(hideTimer.current)
     hideTimer.current = setTimeout(() => {
-      if (!videoRef.current?.paused) setVisible(false)
+      if (!videoRef.current?.paused && !R.current.langMenu) setVisible(false)
     }, HIDE_MS)
   }, [videoRef])
 
@@ -410,6 +467,22 @@ export function PlayerControls({
       // combination where `key` alone doesn't come through as plain
       // 'Enter'/' ').
       const k = normalizeKey(e)
+      // The language menu owns the keys while it's open.
+      if (R.current.langMenu) {
+        const { languages: langs, langIndex: li } = R.current
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', ' ', 'Escape', 'Backspace'].includes(k)) {
+          e.preventDefault()
+          reveal()
+          if (k === 'ArrowUp') setLangIndex(Math.max(0, li - 1))
+          else if (k === 'ArrowDown') setLangIndex(Math.min(langs.length - 1, li + 1))
+          else if (k === 'Enter' || k === ' ') {
+            setLangMenu(false)
+            const lang = langs[li]
+            if (lang && lang !== R.current.currentLanguage) R.current.onLanguage?.(lang)
+          } else setLangMenu(false)
+        }
+        return
+      }
       if (k === 'Escape' || k === 'Backspace') {
         e.preventDefault()
         if (R.current.countdownActive) {
@@ -496,6 +569,10 @@ export function PlayerControls({
         else if (f === 'rew') seekBy(-10)
         else if (f === 'fwd') seekBy(10)
         else if (f === 'next') onNext()
+        else if (f === 'lang') {
+          setLangIndex(Math.max(0, s.languages.indexOf(s.currentLanguage ?? '')))
+          setLangMenu(true)
+        }
       }
     }
     window.addEventListener('keydown', onKey, true)
@@ -562,7 +639,14 @@ export function PlayerControls({
         </div>
       )}
 
-      <div className="pl-hit" onClick={() => { reveal(); togglePlay() }} />
+      <div
+        className="pl-hit"
+        onClick={() => {
+          reveal()
+          if (langMenu) setLangMenu(false)
+          else togglePlay()
+        }}
+      />
 
       <div className={'pl-chrome' + (visible ? '' : ' hide')}>
         <div className="pl-scrim-top" />
@@ -686,12 +770,55 @@ export function PlayerControls({
                 </div>
               </div>
             </div>
-            {hasNext && (
+            {(hasNext || hasLanguages) && (
               <div className="pl-cside">
-                <button className={'pl-btn' + (focus === 'next' ? ' is-foc' : '')} {...onBtn('next')}>
-                  <span className="pl-blabel">Nächste Folge</span>
-                  <Icon name="skipnext" w={26} />
-                </button>
+                {hasLanguages && (
+                  <div className="pl-lang">
+                    <button
+                      type="button"
+                      className={'pl-btn pl-lang-btn' + (focus === 'lang' ? ' is-foc' : '') + (langMenu ? ' open' : '')}
+                      onMouseEnter={() => {
+                        setFocusState('lang')
+                        reveal()
+                      }}
+                      onClick={() => {
+                        reveal()
+                        setFocusState('lang')
+                        if (langMenu) setLangMenu(false)
+                        else openLangMenu()
+                      }}
+                    >
+                      {!langMenu && <span className="pl-blabel">Sprache</span>}
+                      <Icon name="cc" w={20} />
+                      <span>{LANGUAGE_SHORT[currentLanguage ?? ''] ?? currentLanguage ?? '—'}</span>
+                    </button>
+                    {langMenu && (
+                      <div className="pl-lang-menu" role="menu">
+                        <div className="pl-lang-head">Sprache</div>
+                        {languages.map((lang, i) => (
+                          <button
+                            key={lang}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={lang === currentLanguage}
+                            className={'pl-lang-item' + (i === langIndex ? ' is-foc' : '') + (lang === currentLanguage ? ' current' : '')}
+                            onMouseEnter={() => setLangIndex(i)}
+                            onClick={() => chooseLanguage(lang)}
+                          >
+                            <span className="pl-lang-check">{lang === currentLanguage ? '✓' : ''}</span>
+                            {languageLabel(lang)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {hasNext && (
+                  <button className={'pl-btn' + (focus === 'next' ? ' is-foc' : '')} {...onBtn('next')}>
+                    <span className="pl-blabel">Nächste Folge</span>
+                    <Icon name="skipnext" w={26} />
+                  </button>
+                )}
               </div>
             )}
           </div>

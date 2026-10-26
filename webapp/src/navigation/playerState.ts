@@ -43,6 +43,11 @@ export interface DownloadPlayState {
   // Skip direct streaming and go straight to download-and-play — set when a
   // direct stream already failed for this episode (PlayerPage's fallback).
   forceDownload?: boolean
+  // Set when the viewer switched the audio/subtitle language from inside
+  // the player: the episode must be streamed in `language` — a file on disk
+  // can't be used, the library doesn't know which language it is in. On
+  // failure DownloadPlayPage offers to go back to `previousLanguage`.
+  languageSwitch?: { previousLanguage: string }
 }
 
 export interface PlayerState {

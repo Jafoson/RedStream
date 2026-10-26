@@ -8,9 +8,10 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { findDownloadedFolder, getLibrary } from '../api/library'
 import { getStreamUrl } from '../api/stream'
-import { findNextEpisodeAfter, getPreferredLanguage } from '../api/series'
+import { findNextEpisodeAfter, getPreferredLanguage, setSeriesLanguage } from '../api/series'
 import { cancelQueueItem, enqueueDownload, findQueueItemByEpisode, getQueue, type QueueItem } from '../api/queue'
 import { isDirectStreamEnabled, resolveLiveStream, type LiveKind } from '../api/live'
+import { languageLabel } from '../components/player/PlayerControls'
 import type { DownloadPlayState, NextEpisodeRef, PlayerState } from '../navigation/playerState'
 import './DownloadPlayPage.css'
 
@@ -29,7 +30,10 @@ export function DownloadPlayPage() {
   const [percent, setPercent] = useState<number | null>(null)
   const queueIdRef = useRef<number | null>(null)
   const stoppedRef = useRef(false)
-  const startedRef = useRef(false)
+  // Which navigation state this page last started for: the page can be
+  // re-entered with a new state while staying mounted (e.g. "In … weiter-
+  // schauen" after a failed language switch replaces /download-play itself).
+  const startedRef = useRef<DownloadPlayState | null>(null)
   // Filled in by start() below, before it's needed by either
   // tryResolveFromLibrary() or the queue-completion path — whichever of
   // language/nextEpisode the caller didn't already know synchronously.
@@ -116,8 +120,13 @@ export function DownloadPlayPage() {
   }, [findFolderInLibrary, goToPlayer])
 
   useEffect(() => {
-    if (!s || startedRef.current) return
-    startedRef.current = true
+    if (!s || startedRef.current === s) return
+    startedRef.current = s
+    stoppedRef.current = false
+    queueIdRef.current = null
+    setStatus('resolving')
+    setStreamUnavailable(false)
+    setPercent(null)
 
     let queuePoll: ReturnType<typeof setInterval> | null = null
     let libraryPoll: ReturnType<typeof setInterval> | null = null
@@ -182,7 +191,9 @@ export function DownloadPlayPage() {
       // resolvedRef) — findFolderInLibrary alone, unlike tryResolveFromLibrary,
       // doesn't navigate itself, specifically so this can't race ahead of
       // resolvePromise finishing and read a still-default resolvedRef.
-      const [, found] = await Promise.all([resolvePromise, findFolderInLibrary()])
+      // A language switch from the player must not land on a downloaded file:
+      // the library can't tell which language that file is in.
+      const [, found] = await Promise.all([resolvePromise, s!.languageSwitch ? null : findFolderInLibrary()])
       if (found) {
         goToPlayer(found.folder, found.streamUrl)
         return
@@ -192,7 +203,7 @@ export function DownloadPlayPage() {
       // making the viewer wait for the whole episode to download.
       if (s!.forceDownload) {
         setStreamUnavailable(true)
-      } else if (isDirectStreamEnabled()) {
+      } else if (isDirectStreamEnabled() || s!.languageSwitch) {
         setStatus('streaming')
         try {
           const live = await resolveLiveStream({
@@ -205,6 +216,12 @@ export function DownloadPlayPage() {
           return
         } catch {
           if (stoppedRef.current) return
+          // Downloading instead could just as well end up playing the old
+          // language from disk, so a language switch stops here.
+          if (s!.languageSwitch) {
+            setStatus('failed')
+            return
+          }
           setStreamUnavailable(true)
         }
       }
@@ -268,7 +285,11 @@ export function DownloadPlayPage() {
           {s.episodeTitle ? ` — ${s.episodeTitle}` : ''}
         </p>
         {status === 'failed' ? (
-          <p className="download-play__status download-play__status--error">Download fehlgeschlagen</p>
+          <p className="download-play__status download-play__status--error">
+            {s.languageSwitch
+              ? `„${languageLabel(s.language ?? '')}“ kann für diese Folge gerade nicht gestreamt werden.`
+              : 'Download fehlgeschlagen'}
+          </p>
         ) : (
           <>
             <div className="download-play__progress">
@@ -285,7 +306,20 @@ export function DownloadPlayPage() {
             )}
           </>
         )}
-        {status === 'failed' && (
+        {status === 'failed' && s.languageSwitch && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              const back: DownloadPlayState = { ...s, language: s.languageSwitch!.previousLanguage, languageSwitch: undefined }
+              setSeriesLanguage(s.seriesUrl, back.language!).catch(() => {})
+              navigate('/download-play', { replace: true, state: back })
+            }}
+          >
+            In „{languageLabel(s.languageSwitch.previousLanguage)}“ weiterschauen
+          </button>
+        )}
+        {status === 'failed' && !s.languageSwitch && (
           <button type="button" className="btn btn-primary" onClick={() => navigate(-1)}>
             Zurück
           </button>
