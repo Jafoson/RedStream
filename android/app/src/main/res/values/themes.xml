@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="rs_bg">#17120E</color>
+    <color name="rs_accent">#D9824B</color>
+    <style name="Theme.RedStream" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/rs_bg</item>
+        <item name="android:statusBarColor">@color/rs_bg</item>
+        <item name="android:navigationBarColor">@color/rs_bg</item>
+    </style>
+</resources>

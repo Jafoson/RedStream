@@ -1,0 +1,64 @@
+name: Build Android App
+
+on:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Create a GitHub release with the APK'
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: 'Version name (e.g. 1.0.0)'
+        required: false
+        type: string
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease \
+            -PversionName="${{ inputs.version || '1.0.0' }}" \
+            -PversionCode="${{ github.run_number }}"
+
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/RedStream-${{ inputs.version || '1.0.0' }}-${{ github.run_number }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RedStream-apk
+          path: android/dist/*.apk
+
+      - name: Release
+        if: ${{ inputs.release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v${{ inputs.version }}
+          name: RedStream Android ${{ inputs.version }}
+          files: android/dist/*.apk
+          target_commitish: ${{ github.sha }}

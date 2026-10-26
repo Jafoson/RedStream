@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Self-hosted servers are often reached over plain HTTP on the LAN
+     (e.g. http://192.168.1.10:8080), so cleartext is allowed. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
