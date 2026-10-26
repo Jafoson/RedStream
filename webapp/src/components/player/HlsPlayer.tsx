@@ -8,13 +8,16 @@ export interface HlsPlayerProps {
   src: string
   /** 'file' = a plain video file (direct-stream MP4), played without hls.js. */
   kind?: 'hls' | 'file'
+  /** Let the browser play HLS itself when it can (Safari) — needed for
+   * AirPlay; `src` must then work without an auth header (relay or share URL). */
+  native?: boolean
   onLoadedMetadata?: () => void
   /** Playback can't continue (hls.js fatal error / media error). */
   onFatalError?: (reason: string) => void
 }
 
 export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(function HlsPlayer(
-  { src, kind = 'hls', onLoadedMetadata, onFatalError },
+  { src, kind = 'hls', native = false, onLoadedMetadata, onFatalError },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -33,7 +36,8 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(function H
 
     // Direct-stream MP4: the relay URL carries its own capability token, so
     // the browser can load it natively (with Range requests for seeking).
-    if (kind === 'file') {
+    // Same for HLS with `native` in Safari (AirPlay only works that way).
+    if (kind === 'file' || (native && video.canPlayType('application/vnd.apple.mpegurl'))) {
       video.src = src
       return () => {
         video.removeEventListener('error', onMediaError)
@@ -116,7 +120,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(function H
       video.removeEventListener('error', onMediaError)
       hlsInstance?.destroy()
     }
-  }, [src, kind])
+  }, [src, kind, native])
 
   return (
     <video
@@ -124,6 +128,7 @@ export const HlsPlayer = forwardRef<HTMLVideoElement, HlsPlayerProps>(function H
       className="player-video"
       playsInline
       autoPlay
+      x-webkit-airplay="allow"
       // Not a tab stop — this app has its own keyboard-driven focus model
       // (PlayerControls' onKey), and a <video> with real DOM focus responds
       // to some keys (notably Space) via the browser's own built-in

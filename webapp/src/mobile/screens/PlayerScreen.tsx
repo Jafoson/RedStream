@@ -5,58 +5,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { HlsPlayer } from '../../components/player/HlsPlayer'
-import { resolveLiveStream } from '../../api/live'
-import { getEpisodes, getProviders, getSeasons, setSeriesLanguage } from '../../api/series'
-import { getEpisodeProgress, getStreamUrl, saveProgress } from '../../api/stream'
+import { getProviders, setSeriesLanguage } from '../../api/series'
+import { getEpisodeProgress, saveProgress } from '../../api/stream'
 import { useCast } from '../CastContext'
 import { epCode, formatTime, languageLabel, sortLanguages } from '../format'
 import { MIcon } from '../icons'
 import type { PlayItem } from '../types'
+import { resolveStream, type ResolvedStream } from '../resolve'
 
 const RESUME_MIN_SECONDS = 30
+// Safari plays HLS itself — used there instead of hls.js because only
+// native playback can go to an Apple TV (AirPlay).
+const NATIVE_HLS =
+  typeof window !== 'undefined' &&
+  'WebKitPlaybackTargetAvailabilityEvent' in window &&
+  document.createElement('video').canPlayType('application/vnd.apple.mpegurl') !== ''
 const COMPLETED_RATIO = 0.9
-
-interface Resolved {
-  url: string
-  kind: 'hls' | 'file'
-  next: PlayItem | null
-}
-
-/** Finds the episode on the server's disk and the episode after it. */
-async function lookupSeason(item: PlayItem) {
-  const season = (await getSeasons(item.seriesUrl)).find((s) => s.season_number === item.season)
-  if (!season) return { ep: null, next: null }
-  const eps = await getEpisodes(season.url)
-  const idx = eps.findIndex((e) => e.url === item.episodeUrl || e.episode_number === item.episodeNumber)
-  if (idx < 0) return { ep: null, next: null }
-  const n = eps[idx + 1]
-  const next: PlayItem | null = n
-    ? {
-        ...item,
-        episodeUrl: n.url,
-        episodeNumber: n.episode_number,
-        episodeTitle: (n.title_de || n.title_en || '').trim() || undefined,
-        absoluteEpisodeNumber: n.absolute_episode_number,
-        folder: n.downloaded ? n.folder : null,
-      }
-    : null
-  return { ep: eps[idx], next }
-}
-
-async function resolve(item: PlayItem, allowDownloaded: boolean): Promise<Resolved> {
-  const { ep, next } = await lookupSeason(item).catch(() => ({ ep: null, next: null }))
-  const folder = allowDownloaded ? item.folder || (ep?.downloaded ? ep.folder : null) : null
-  if (folder) {
-    try {
-      const url = await getStreamUrl({ folder, season: item.season, episode: item.episodeNumber })
-      return { url, kind: 'hls', next }
-    } catch {
-      // not on disk after all — stream it
-    }
-  }
-  const live = await resolveLiveStream({ episodeUrl: item.episodeUrl, language: item.language, provider: item.provider })
-  return { url: live.url, kind: live.kind, next }
-}
 
 export function PlayerScreen() {
   const location = useLocation()
@@ -65,7 +29,7 @@ export function PlayerScreen() {
   const initial = location.state as PlayItem | null
   const [item, setItem] = useState<PlayItem | null>(initial)
   const [load, setLoad] = useState({ key: 0, startAt: null as number | null, allowDownloaded: true })
-  const [resolved, setResolved] = useState<Resolved | null>(null)
+  const [resolved, setResolved] = useState<ResolvedStream | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [languages, setLanguages] = useState<string[]>([])
   const [controls, setControls] = useState(true)
@@ -73,6 +37,7 @@ export function PlayerScreen() {
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState({ current: 0, duration: 0 })
   const [scrub, setScrub] = useState<number | null>(null)
+  const [airplay, setAirplay] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const itemRef = useRef(item)
@@ -112,7 +77,7 @@ export function PlayerScreen() {
     setError(null)
     ;(async () => {
       try {
-        const r = await resolve(item, load.allowDownloaded)
+        const r = await resolveStream(item, { allowDownloaded: load.allowDownloaded, loginFree: NATIVE_HLS })
         if (cancelled) return
         let resume = load.startAt
         if (resume === null) {
@@ -195,6 +160,15 @@ export function PlayerScreen() {
     }
   }, [resolved, save, scheduleHide])
 
+  // AirPlay (Safari): offer the button while an Apple TV is reachable.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || !NATIVE_HLS) return
+    const onAvail = (e: Event) => setAirplay((e as Event & { availability?: string }).availability === 'available')
+    v.addEventListener('webkitplaybacktargetavailabilitychanged', onAvail)
+    return () => v.removeEventListener('webkitplaybacktargetavailabilitychanged', onAvail)
+  }, [resolved])
+
   if (!item) {
     return (
       <div className="m-player">
@@ -271,6 +245,7 @@ export function PlayerScreen() {
           ref={videoRef}
           src={resolved.url}
           kind={resolved.kind}
+          native={NATIVE_HLS}
           onFatalError={(reason) => setError(`Wiedergabe fehlgeschlagen: ${reason}`)}
         />
       )}
@@ -325,6 +300,18 @@ export function PlayerScreen() {
                   </div>
                 )}
               </div>
+            )}
+            {airplay && (
+              <button
+                type="button"
+                className="m-icon-btn"
+                aria-label="AirPlay"
+                onClick={() =>
+                  (videoRef.current as (HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void }) | null)?.webkitShowPlaybackTargetPicker?.()
+                }
+              >
+                <MIcon name="airplay" />
+              </button>
             )}
             <button type="button" className="m-btn m-btn--ghost" onClick={toTv}>
               <MIcon name="tv" size={20} />

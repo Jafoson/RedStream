@@ -36,6 +36,15 @@ logger = get_logger(__name__)
 
 live_bp = Blueprint("live", __name__, url_prefix="/api/live")
 
+
+@live_bp.after_request
+def _cors(resp):
+    # Chromecast / Android TV fetch the relay themselves (Google Cast) and
+    # their player needs CORS; the session id is the credential anyway.
+    from .share import add_cors_headers
+
+    return add_cors_headers(resp)
+
 SESSION_IDLE_SECONDS = 4 * 3600
 _MAX_SESSIONS = 200
 _CHUNK = 64 * 1024

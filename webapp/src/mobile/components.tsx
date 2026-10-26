@@ -192,6 +192,9 @@ export function TabBar({ active }: { active: MTab | null }) {
 
 // ── Cast: target sheet + remote bar ─────────────────────────────────────────
 
+/** Safari: AirPlay works from the player (see PlayerScreen). */
+const AIRPLAY = typeof window !== 'undefined' && 'WebKitPlaybackTargetAvailabilityEvent' in window
+
 function describe(screen: CastScreen): string {
   const st = screen.state || {}
   let what = '…'
@@ -241,6 +244,27 @@ export function CastSheet() {
             close()
           }}
         />
+        {(cast.gcastAvailable || cast.target?.kind === 'gcast') && (
+          <TargetRow
+            icon="cast"
+            title={cast.target?.kind === 'gcast' ? cast.target.name : 'Chromecast / Android TV'}
+            subtitle={cast.target?.kind === 'gcast' ? 'Google Cast · verbunden' : 'Google Cast · Gerät in der Nähe wählen'}
+            selected={cast.target?.kind === 'gcast'}
+            onClick={() => {
+              if (cast.target?.kind === 'gcast') close()
+              else cast.connectGCast().then(close, () => {})
+            }}
+          />
+        )}
+        {AIRPLAY && (
+          <TargetRow
+            icon="airplay"
+            title="Apple TV (AirPlay)"
+            subtitle="Folge auf dem iPhone starten und im Player auf AirPlay tippen"
+            selected={false}
+            onClick={close}
+          />
+        )}
         {screens.isLoading && <Spinner />}
         {screens.isError && <p className="m-error-text">Fernseher konnten nicht geladen werden.</p>}
         {screens.data && list.length === 0 && (
@@ -255,7 +279,7 @@ export function CastSheet() {
             icon="tv"
             title={s.name + (s.profile_id != null && s.profile_id === mine ? '  · dein Profil' : '')}
             subtitle={(s.profile_name ? `Profil ${s.profile_name} · ` : '') + describe(s)}
-            selected={cast.target?.id === s.id}
+            selected={cast.target?.kind === 'screen' && cast.target.id === s.id}
             onClick={() => {
               cast.select(s)
               close()
@@ -296,7 +320,7 @@ export function RemoteBar() {
     <div className="m-remote">
       {active && (st?.duration ?? 0) > 0 && <ProgressLine fraction={(st?.position ?? 0) / (st?.duration || 1)} className="m-remote__progress" />}
       <div className="m-remote__row">
-        <MIcon name="tv" className="m-accent m-remote__tv" />
+        <MIcon name={target.kind === 'gcast' ? 'castOn' : 'tv'} className="m-accent m-remote__tv" />
         <button type="button" className="m-remote__text" onClick={() => cast.setSheetOpen(true)}>
           <strong>{target.name}</strong>
           <span>{line}</span>

@@ -567,12 +567,14 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
         from .admin_api import admin_bp
         from .cast import cast_bp
         from .live_stream import live_bp
+        from .share import share_bp
         from .webapp_auth import webapp_bp
 
         app.register_blueprint(webapp_bp)
         app.register_blueprint(admin_bp)
         app.register_blueprint(live_bp)
         app.register_blueprint(cast_bp)
+        app.register_blueprint(share_bp)
 
     base_url = os.environ.get("ANIWORLD_WEB_BASE_URL", "").strip().rstrip("/")
     if base_url:
@@ -621,6 +623,7 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             csrf.exempt(admin_bp)
             csrf.exempt(live_bp)
             csrf.exempt(cast_bp)
+            csrf.exempt(share_bp)
 
         if sso_enabled:
             init_oidc(app, force_sso=force_sso)
@@ -2743,6 +2746,9 @@ def create_app(auth_enabled=False, sso_enabled=False, force_sso=False):
             # creating a session (live.resolve) still needs a login.
             "live.playlist",
             "live.media",
+            # Cast/AirPlay playback of downloaded episodes: same idea, the
+            # token from POST /api/share (which needs a login) is the credential.
+            "share.serve",
         }
         for endpoint, view_func in list(app.view_functions.items()):
             if endpoint not in _exempt:

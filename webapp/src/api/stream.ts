@@ -120,3 +120,10 @@ export function getEpisodeProgress(episodeUrl: string): Promise<ProgressEntry | 
     (r) => r.progress,
   )
 }
+
+/** Login-free, short-lived URL for a downloaded episode's playlist (as
+ * returned by getStreamUrl) — for players that can't send the auth header:
+ * Chromecast / Android TV, AirPlay, Safari's native HLS. web/share.py. */
+export function shareStreamUrl(streamPath: string): Promise<string> {
+  return apiFetch<{ url: string }>('/api/share', { method: 'POST', body: { path: streamPath } }).then((r) => r.url)
+}
