@@ -731,6 +731,16 @@ playlists (`403` otherwise).
 
 ---
 
+## Login-free playback URLs (Google Cast / AirPlay)
+
+A Chromecast / Android TV or an Apple TV fetches the stream itself and can't send the `Authorization` header. The direct-stream relay (`/api/live/<sid>/…`) is already login-free (the session id is the credential); for downloaded episodes:
+
+```
+POST /api/share
+```
+
+Body `{ "path": "/api/stream/files/…/Show S01E001.m3u8" }` (the path from `GET /api/stream`) → `{ "url": "/api/share/<token>/Show%20S01E001.m3u8", "expires_in": 43200 }`. `GET /api/share/<token>/<file>` needs no login and serves only that episode's `.m3u8`/`.ts` files (Range supported) for 12 h. `/api/share/*` and `/api/live/*` send CORS headers (`Access-Control-Allow-Origin: *`, `Range` allowed), which the Cast receiver needs. Clients load the absolute URL on Google's Default Media Receiver (`application/x-mpegurl`, TS segments) or hand it to AirPlay.
+
 ## Cast ("Auf TV abspielen")
 
 Lets the Android app remote-control a browser that runs the TV web app.
