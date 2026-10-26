@@ -1,9 +1,9 @@
-"""Access-request gate for the Flutter *web* build.
+"""Access-request gate for the RedStream TV web app.
 
-The web build never shows a username/password form. Instead a fresh browser
+The web app never shows a username/password form. Instead a fresh browser
 asks for access, an admin approves or denies it from the server terminal
 (`aniworld --web-requests` / `--web-approve` / `--web-deny`), and once
-approved the browser receives a bearer token exactly like the desktop app
+approved the browser receives a bearer token exactly like an API client
 gets from `/api/auth/login` — it just never had to know a password.
 """
 

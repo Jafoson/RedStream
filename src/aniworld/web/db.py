@@ -282,11 +282,11 @@ def delete_api_token(token):
 
 
 # ===== Web-App Access Requests =====
-# Gates the Flutter *web* build behind an out-of-band approval: a browser that
+# Gates the RedStream TV web app behind an out-of-band approval: a browser that
 # has no token yet asks for access, and an admin approves/denies it from the
 # server terminal (`aniworld --web-requests` / `--web-approve` / `--web-deny`
 # / `--web-revoke`). This is independent of the dashboard's own username/
-# password or SSO login — the desktop/TV app never touches this table.
+# password or SSO login.
 
 _CREATE_WEB_ACCESS_REQUESTS_TABLE = """\
 CREATE TABLE IF NOT EXISTS web_access_requests (

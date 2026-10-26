@@ -4,10 +4,8 @@
 # The site's only web frontend — served same-origin by the Python backend at
 # the root (see app.py's `index` route, webapp_auth.py for the device-approval
 # API it talks to) — this is what makes the "no manual server URL, no normal
-# login" web build work. Same role the Flutter web build used to fill; this
-# React app replaced it so the Flutter project (app/) only needs to target
-# native Android/TV builds. The separate /react dashboard that used to be
-# served at this same root was removed — this is the one and only web UI now.
+# login" web app work. The separate /react dashboard that used to be served
+# at this same root was removed — this is the one and only web UI now.
 #
 # --platform=$BUILDPLATFORM: the output is architecture-independent JS/HTML,
 # so on a multi-platform build (linux/amd64,linux/arm64) this runs natively

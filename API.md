@@ -12,7 +12,7 @@ ANIWORLD_WEB_SSO=1       # OIDC / SSO login (implies auth)
 ANIWORLD_WEB_FORCE_SSO=1 # SSO only, local login disabled
 ```
 
-When auth is enabled every endpoint requires either a valid **Flask session** (browser) or a **Bearer token** (API clients / Flutter app). A subset of endpoints additionally requires the **admin** role (see table below).
+When auth is enabled every endpoint requires either a valid **Flask session** (browser) or a **Bearer token** (API clients, the TV web app). A subset of endpoints additionally requires the **admin** role (see table below).
 
 ### Bearer Token Flow
 

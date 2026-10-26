@@ -109,9 +109,9 @@ User settings live in `~/.aniworld/.env` (template at `src/aniworld/.env.example
 
 ### Web UI (`src/aniworld/web/`)
 
-Flask app served by Waitress, exposing a JSON REST API (documented in `API.md`) consumed by one same-origin browser frontend, built and served independently (plus the native Flutter app, which talks to the same API but isn't served by Flask):
+Flask app served by Waitress, exposing a JSON REST API (documented in `API.md`) consumed by one same-origin browser frontend, built and served independently:
 
-- **RedStream TV web app** (`webapp/`, see below) — the site's only browser frontend, served at `/`. A Vite + React + TypeScript SPA styled after the native Flutter app's TV-oriented design (dark theme, poster rails, D-pad-style focus treatment reused as plain `:hover`/`:focus-visible`), used as the browser/web target for what used to be the Flutter app's own web build. Device-approval auth instead of a login form (see below) — there is no username/password form anywhere in the browser.
+- **RedStream TV web app** (`webapp/`, see below) — the site's only browser frontend, served at `/`. A Vite + React + TypeScript SPA with a TV-oriented design (dark theme, poster rails, D-pad-style focus treatment reused as plain `:hover`/`:focus-visible`). Device-approval auth instead of a login form (see below) — there is no username/password form anywhere in the browser.
 
 There used to be a second frontend, a `/react` dashboard with local username/password + OIDC/SSO login, served at this same root; it was removed so this is the only web UI. `ANIWORLD_ENABLE_WEBAPP` is now the sole on/off switch for the web UI (see below) — the old `ANIWORLD_API_ONLY` flag that used to disable just the React dashboard no longer exists, since there's nothing left for it to selectively disable. `web/templates/` and `web/static/` (the pre-React Jinja/vanilla-JS dashboard, removed earlier) and `react/` (removed with this change) — don't recreate either; add SPA components under `webapp/src/` instead.
 
@@ -142,15 +142,15 @@ The same four flags also cover **admin dashboard** requests (type `admin` in the
 
 The web UI polls `get_ffmpeg_progress()` for live download progress.
 
-**RedStream TV web app & device approval** (`webapp/`, `web/webapp_auth.py`): a Vite + React + TypeScript SPA built with `npm run build` in `webapp/` (Docker's `webapp-builder` stage), copied into `web/webapp_dist/` at image build time and served same-origin by Flask at the site root (`app.py`'s `index` route — an SPA-fallback catch-all, `api/`-prefixed paths excluded so a removed/mistyped endpoint 404s instead of silently returning the SPA shell). Local dev: `npm run dev` in `webapp/`, proxying `/api`, `/oidc`, `/admin` to a separately-running `aniworld -w` backend (`vite.config.ts`'s `base` is `/`, matching root serving). Baked into the image unconditionally; `ANIWORLD_ENABLE_WEBAPP` (default `1`) is a runtime on/off switch — set to `0` to fully unregister the web UI and the `/api/webapp/*` blueprint, leaving only `/api/*`. It is independent of `--web-auth`/`--web-sso` and never shows a username/password form: a browser without a token calls `POST /api/webapp/request-access`, gets a `device_id`, and polls `GET /api/webapp/request-access/<device_id>` until an admin approves it from the server terminal (`--web-requests` / `--web-approve <id>` / `--web-deny <id>` / `--web-revoke <id>`, backed by the `web_access_requests` table in `web/db.py`). Approval logs the browser in as the (first) admin account and issues a normal bearer token via the existing `api_tokens` mechanism — revoking just deletes that token (`webapp/src/context/AuthContext.tsx`'s `logout()`, wired to Settings' "Zugriff widerrufen"). The native Flutter app (Android/TV, desktop) is untouched and keeps using its own `LoginScreen`/`SetupScreen` — it no longer has a web build target at all (see "Flutter frontend" below); this SPA replaces that role.
+**RedStream TV web app & device approval** (`webapp/`, `web/webapp_auth.py`): a Vite + React + TypeScript SPA built with `npm run build` in `webapp/` (Docker's `webapp-builder` stage), copied into `web/webapp_dist/` at image build time and served same-origin by Flask at the site root (`app.py`'s `index` route — an SPA-fallback catch-all, `api/`-prefixed paths excluded so a removed/mistyped endpoint 404s instead of silently returning the SPA shell). Local dev: `npm run dev` in `webapp/`, proxying `/api`, `/oidc`, `/admin` to a separately-running `aniworld -w` backend (`vite.config.ts`'s `base` is `/`, matching root serving). Baked into the image unconditionally; `ANIWORLD_ENABLE_WEBAPP` (default `1`) is a runtime on/off switch — set to `0` to fully unregister the web UI and the `/api/webapp/*` blueprint, leaving only `/api/*`. It is independent of `--web-auth`/`--web-sso` and never shows a username/password form: a browser without a token calls `POST /api/webapp/request-access`, gets a `device_id`, and polls `GET /api/webapp/request-access/<device_id>` until an admin approves it from the server terminal (`--web-requests` / `--web-approve <id>` / `--web-deny <id>` / `--web-revoke <id>`, backed by the `web_access_requests` table in `web/db.py`). Approval logs the browser in as the (first) admin account and issues a normal bearer token via the existing `api_tokens` mechanism — revoking just deletes that token (`webapp/src/context/AuthContext.tsx`'s `logout()`, wired to Settings' "Zugriff widerrufen").
 
-**Admin dashboard** (`webapp/src/pages/AdminPage.tsx` at `/verwaltung`, linked from Settings → Verwaltung; backend `web/admin_api.py`): a second, terminal-only approval on top of the web app's own. An already-approved browser calls `POST /api/webapp/admin-access`, shows the returned code, and the owner approves that `admin`-type row in `web_access_requests` with `--web-approve <id>`. That issues a separate admin token (stored only as `token_hash` once picked up, valid for that browser until revoked, `X-Admin-Token` header) that works solely for `/api/admin/*`; admin requests can never be approved from inside the dashboard. The download queue ("Downloads") and the on-disk library with storage stats and per-episode/season/title deletion ("Bibliothek") live only here (`webapp/src/pages/admin/`), not in the sidebar — the TV app's normal sidebar has no Queue/Library screens anymore, unlike the Flutter app. The dashboard approves/denies/revokes web-app devices and shows every profile's `watch_progress` rows, where deleting a row (or a whole series per profile) makes the episode count as never watched again.
+**Admin dashboard** (`webapp/src/pages/AdminPage.tsx` at `/verwaltung`, linked from Settings → Verwaltung; backend `web/admin_api.py`): a second, terminal-only approval on top of the web app's own. An already-approved browser calls `POST /api/webapp/admin-access`, shows the returned code, and the owner approves that `admin`-type row in `web_access_requests` with `--web-approve <id>`. That issues a separate admin token (stored only as `token_hash` once picked up, valid for that browser until revoked, `X-Admin-Token` header) that works solely for `/api/admin/*`; admin requests can never be approved from inside the dashboard. The download queue ("Downloads") and the on-disk library with storage stats and per-episode/season/title deletion ("Bibliothek") live only here (`webapp/src/pages/admin/`), not in the sidebar — the TV app's normal sidebar has no Queue/Library screens anymore. The dashboard approves/denies/revokes web-app devices and shows every profile's `watch_progress` rows, where deleting a row (or a whole series per profile) makes the episode count as never watched again.
 
 **Direct streaming** (`web/live_stream.py`, `webapp/src/api/live.ts`): when an episode isn't on disk, `DownloadPlayPage` first calls `POST /api/live/resolve` (provider fallback via `models/common/common.py:resolve_live_stream()`, the same resolution `watch()` uses for mpv) and plays the returned same-origin relay URL — HLS playlists are fetched with the provider's `PROVIDER_HEADERS_D` and every URI rewritten back to `/api/live/<sid>/…`, segments/keys/MP4s are streamed through with Range support, nothing touches disk. If resolving fails, or the player hits a fatal error mid-stream (`HlsPlayer`'s `onFatalError` → `PlayerPage` re-enters `/download-play` with `forceDownload`), it falls back to the old download-and-play path. Per-browser toggle in Settings → Wiedergabe (`rstv_direct_stream`, default on). While direct streaming, `PlayerPage` doesn't enqueue the next episode's prefetch download.
 
 **Language switch in the player**: `PlayerPage` loads the episode's languages from `/api/providers` and `PlayerControls` shows them in a menu (mouse or D-pad: focus "lang" in the control row, ↑/↓, Enter). Choosing one saves the series language for the profile (`PUT /api/series-language`) and re-enters `/download-play` with `languageSwitch` set — that path skips the library (it can't tell which language a downloaded file is in) and always direct-streams; resume comes from the saved progress. If the new language can't be streamed it offers to continue in the previous one.
 
-Design system for the TV web app is ported literally from the Flutter app's `lib/theme/rs_theme.dart` (colors, radii, typography, layout constants — see `webapp/src/styles/theme.css`); the Flutter app's D-pad focus engine (`AppNavController`, `TvFocusable`) was deliberately **not** ported (it's remote-control-specific), only the visual focus-ring treatment it drove (accent border + glow + scale), reimplemented as plain CSS `:hover`/`:focus-visible`. Screen-for-screen it mirrors the Flutter app: Home (rails), Grid (Serien/Anime/Filme, paginated), Search, Detail (hero/seasons/episodes/language override/watchlist/autosync), Player (custom HLS controls via `hls.js`, skip-intro/outro, auto-advance, resume), Watchlist, Settings (Speicher/Verbindung only — no Server/Updates sections, those are native-only), and Profile picker.
+Design system for the TV web app: dark theme, poster rails, colors/radii/typography/layout constants in `webapp/src/styles/theme.css`; remote-control (D-pad) navigation via the app's own focus engine (`webapp/src/tv/FocusEngine.tsx`), with the focus ring (accent border + glow + scale) also shown on plain `:hover`/`:focus-visible`. Screens: Home (rails), Grid (Serien/Anime/Filme, paginated), Search, Detail (hero/seasons/episodes/language override/watchlist/autosync), Player (custom HLS controls via `hls.js`, skip-intro/outro, auto-advance, resume, language switch), Watchlist, Settings (Speicher/Anzeige/Wiedergabe/Verbindung/Verwaltung), Profile picker, and the admin dashboard. There is no native app in this repo anymore — the former Flutter client (`app/`) was removed; the REST API it used still exists.
 
 ### Anime4K (`src/aniworld/anime4k/`)
 
@@ -163,55 +163,6 @@ Some sites require solving a captcha. `autodeps.py:ensure_patchright_chromium()`
 ### Windows-specific behaviour
 
 On Windows, `DependencyManager` in `autodeps.py` auto-downloads FFmpeg (from BtbN/FFmpeg-Builds) and mpv (`shinchiro/mpv-winbuild-cmake`) if they are not on `PATH`. This runs at the start of every `download()` call.
-
-### Flutter frontend (`app/`)
-
-Android TV client built with Flutter (Dart SDK ^3.12.0), displayed under the app name **RedStream**. Primary target is Android TV — the app locks to landscape and is D-pad/remote-navigable via custom focus widgets (`tv_focusable.dart`, `tv_card.dart`). Native targets only (Android, TV, desktop) — it no longer builds for web; `app/web/` was removed once the RedStream TV web app (`webapp/`, see "Web UI" above) took over that role with its own React implementation of the same screens/design.
-
-**Architecture**: Riverpod for state management, Dio for HTTP. On first launch shows `SetupScreen` to save the backend server URL into `shared_preferences`. All subsequent API calls go through `ApiService` (wraps Dio, routes image URLs through `/api/proxy-image`).
-
-**Screens**: Home, Search, Grid, Detail (series metadata), Episodes, Player (ExoPlayer/native HLS via `video_player`), Queue, Library, Settings.
-
-**Backend integration**: The Flutter app is a thin client that talks exclusively to the Python web UI REST API. It does not talk to aniworld.to directly. Key endpoints it consumes: `/api/search`, `/api/series`, `/api/seasons`, `/api/episodes`, `/api/providers`, `/api/download`, `/api/queue`, `/api/stream`, `/api/library`, `/api/settings`, `/api/proxy-image`.
-
-**Build/run commands** (run from `app/`):
-```bash
-flutter pub get
-flutter run                         # connected Android device / emulator
-flutter build apk --release         # release APK
-flutter build apk --target-platform android-arm64 --split-per-abi
-```
-
-### MCP Server (Dart & Flutter)
-
-The project uses the **official Dart & Flutter MCP server** (ships with Dart SDK ≥ 3.9, no separate install needed). Configuration is in `.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "dart": {
-      "command": "dart",
-      "args": ["mcp-server"],
-      "cwd": "app"
-    }
-  }
-}
-```
-
-The server runs in the context of `app/` and exposes these tools to Claude Code:
-
-| Tool | Funktion |
-|---|---|
-| `analyze_files` | Dart-Code analysieren & Fehler finden |
-| `dart_fix` / `dart_format` | Code auto-reparieren & formatieren |
-| `run_tests` | Flutter-Tests ausführen |
-| `pub` / `pub_dev_search` | Pakete suchen & in `pubspec.yaml` installieren |
-| `hot_reload` / `hot_restart` | Laufende App neuladen |
-| `get_runtime_errors` / `get_app_logs` | Laufzeitfehler & Logs abrufen |
-| `widget_inspector` | Flutter Widget-Baum inspizieren |
-| `list_devices` / `launch_app` / `stop_app` | Gerät & App-Lifecycle steuern |
-
-To add/disable individual tools use `--enable` / `--disable` flags (see `dart mcp-server --help`).
 
 ### Branch note
 

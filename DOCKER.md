@@ -1,7 +1,7 @@
 # RedStream — Server Setup Guide
 
 Self-host the RedStream backend on any Linux server using Docker Compose.
-The Flutter Android TV app connects to this backend over the local network or internet.
+The RedStream TV web app is served by this backend at `/` and works over the local network or internet.
 
 ---
 
@@ -389,9 +389,9 @@ Docker created the directory as root before you could. Fix it:
 sudo chown -R 1000:1000 ./downloads
 ```
 
-### 401 Unauthorized from the Flutter app
+### Web app asks for access again
 
-The stored token may have been invalidated (e.g. after a database reset). Open the app → Settings → Log out, then log in again.
+The browser's stored token was invalidated (e.g. revoked, or after a database reset). Approve the new request again with `aniworld --web-requests` / `aniworld --web-approve <id>`.
 
 ### Check the auth API directly
 
