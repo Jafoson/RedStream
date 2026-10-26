@@ -10,6 +10,7 @@ import com.google.android.gms.cast.HlsVideoSegmentFormat
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
+import com.google.android.gms.cast.MediaQueueItem
 import com.google.android.gms.cast.MediaStatus
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastOptions
@@ -55,6 +56,9 @@ class GoogleCast(context: Context) {
     var position by mutableStateOf(0.0)
         private set
     var duration by mutableStateOf(0.0)
+        private set
+    /** URL of what the device plays (identifies the queue item). */
+    var contentId by mutableStateOf<String?>(null)
         private set
 
     private val session: CastSession? get() = castContext?.sessionManager?.currentCastSession
@@ -105,6 +109,7 @@ class GoogleCast(context: Context) {
         playerState = "idle"
         position = 0.0
         duration = 0.0
+        contentId = null
     }
 
     private fun refresh() {
@@ -117,6 +122,7 @@ class GoogleCast(context: Context) {
         }
         position = c.approximateStreamPosition / 1000.0
         if (c.streamDuration > 0) duration = c.streamDuration / 1000.0
+        contentId = c.mediaInfo?.contentId
     }
 
     private fun updateDevices() {
@@ -149,8 +155,7 @@ class GoogleCast(context: Context) {
         castContext?.sessionManager?.endCurrentSession(true)
     }
 
-    fun load(url: String, title: String, subtitle: String, startSeconds: Double) {
-        val c = client ?: error("Kein Chromecast verbunden")
+    private fun queueItem(url: String, title: String, subtitle: String, startSeconds: Double): MediaQueueItem {
         val meta = MediaMetadata(MediaMetadata.MEDIA_TYPE_TV_SHOW).apply {
             putString(MediaMetadata.KEY_SERIES_TITLE, title)
             putString(MediaMetadata.KEY_TITLE, subtitle)
@@ -163,13 +168,26 @@ class GoogleCast(context: Context) {
             .setHlsVideoSegmentFormat(HlsVideoSegmentFormat.MPEG2_TS)
             .setMetadata(meta)
             .build()
-        c.load(
-            MediaLoadRequestData.Builder()
-                .setMediaInfo(info)
-                .setAutoplay(true)
-                .setCurrentTime((startSeconds * 1000).toLong())
-                .build(),
-        )
+        return MediaQueueItem.Builder(info)
+            .setAutoplay(true)
+            .setPreloadTime(20.0)
+            .setStartTime(startSeconds)
+            .build()
+    }
+
+    /** Plays an episode as a new queue; more are added with [append]. */
+    fun load(url: String, title: String, subtitle: String, startSeconds: Double) {
+        val c = client ?: error("Kein Chromecast verbunden")
+        c.queueLoad(arrayOf(queueItem(url, title, subtitle, startSeconds)), 0, MediaStatus.REPEAT_MODE_REPEAT_OFF, (startSeconds * 1000).toLong(), null)
+    }
+
+    /** Adds an episode at the end of the device's queue — it plays there by itself. */
+    fun append(url: String, title: String, subtitle: String) {
+        client?.queueAppendItem(queueItem(url, title, subtitle, 0.0), null)
+    }
+
+    fun next() {
+        client?.queueNext(null)
     }
 
     fun toggle() {

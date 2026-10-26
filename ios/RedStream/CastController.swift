@@ -7,6 +7,10 @@ import Foundation
 ///   controlled through the server; remembered across launches;
 /// - a Google Cast device (Chromecast, Android TV), see `GoogleCastManager`.
 /// No target = play on this phone (which may itself be AirPlaying to an Apple TV).
+/// Like the TV/desktop player: jump to the next episode 30 s before the end
+/// (its 40 s "Nächste Folge" window minus the 10 s countdown).
+private let castAdvanceRemaining = 30.0
+
 @MainActor
 final class CastController: ObservableObject {
     enum Kind { case screen, gcast }
@@ -26,6 +30,13 @@ final class CastController: ObservableObject {
     @Published private var screenOffline = false
     /// What the Cast device plays (it only knows a URL and a title).
     @Published private var gcastItem: PlayItem?
+    // The device's queue by URL — the next episode is appended right away so
+    // the TV moves on by itself; while the app runs it's topped up one at a time.
+    private var gcastQueue: [String: PlayItem] = [:]
+    private var nextQueuedFor = Set<String>()
+    private var queuedNext: [String: PlayItem] = [:]
+    private var advancedFrom = Set<String>()
+    private var followTask: Task<Void, Never>?
     private var bag = Set<AnyCancellable>()
     private var saveTask: Task<Void, Never>?
 
@@ -65,6 +76,15 @@ final class CastController: ObservableObject {
         }
         // Views observe this controller; pass the Cast manager's changes on.
         gcast.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &bag)
+        // Follow the device through its queue: a new item playing → that's the
+        // current episode (the previous one counts as watched), top the queue
+        // up, and skip ahead 30 s before the end like the desktop player.
+        followTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                self?.followQueue()
+            }
+        }
         // A Cast device doesn't report to the server — save its progress from here.
         saveTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -76,6 +96,55 @@ final class CastController: ObservableObject {
                 try? await self.api.saveProgress(item, position: pos, duration: dur, completed: pos / dur >= 0.9)
             }
         }
+    }
+
+    private func followQueue() {
+        guard gcast.connected != nil else { return }
+        if let id = gcast.contentID, let playing = gcastQueue[id], let cur = gcastItem, playing.episodeUrl != cur.episodeUrl {
+            let dur = gcast.duration
+            if dur > 0 { Task { try? await api.saveProgress(cur, position: dur, duration: dur, completed: true) } }
+            gcastItem = playing
+        }
+        guard let now = gcastItem, gcast.playerState != "idle" else { return }
+        if !nextQueuedFor.contains(now.episodeUrl) { Task { await queueNext(after: now) } }
+        let remaining = gcast.duration - gcast.position
+        if gcast.playerState == "playing", gcast.duration > 60, remaining <= castAdvanceRemaining,
+           queuedNext[now.episodeUrl] != nil, advancedFrom.insert(now.episodeUrl).inserted {
+            gcast.next()
+        }
+    }
+
+    /// Puts the episode after `item` into the device's queue (once).
+    private func queueNext(after item: PlayItem) async {
+        guard nextQueuedFor.insert(item.episodeUrl).inserted else { return }
+        do {
+            guard let next = try await nextEpisode(after: item) else { return }
+            let url = try await loginFreeURL(next)
+            gcast.append(url: url, title: next.seriesTitle, subtitle: subtitle(next))
+            gcastQueue[url.absoluteString] = next
+            queuedNext[item.episodeUrl] = next
+        } catch {
+            nextQueuedFor.remove(item.episodeUrl) // try again next tick
+        }
+    }
+
+    private func nextEpisode(after item: PlayItem) async throws -> PlayItem? {
+        guard let season = try await api.seasons(item.seriesUrl).first(where: { $0.seasonNumber == item.season }) else { return nil }
+        let eps = try await api.episodes(season.url)
+        guard let idx = eps.firstIndex(where: { $0.url == item.episodeUrl || $0.episodeNumber == item.episodeNumber }),
+              idx + 1 < eps.count else { return nil }
+        let n = eps[idx + 1]
+        var copy = item
+        copy.episodeUrl = n.url
+        copy.episodeNumber = n.episodeNumber
+        copy.episodeTitle = nonEmpty(n.title)
+        copy.absoluteEpisodeNumber = n.absoluteEpisodeNumber
+        copy.folder = n.isDownloaded ? n.folder : nil
+        return copy
+    }
+
+    private func subtitle(_ item: PlayItem) -> String {
+        epCode(item.season, item.episodeNumber) + (item.episodeTitle.map { " · " + $0 } ?? "")
     }
 
     func select(_ screen: Screen?) {
@@ -113,13 +182,12 @@ final class CastController: ObservableObject {
                p.position > 30, p.position < p.duration - 10 {
                 resume = p.position
             }
+            gcastQueue = [url.absoluteString: item]
+            nextQueuedFor = []
+            queuedNext = [:]
+            advancedFrom = []
             gcastItem = item
-            gcast.load(
-                url: url,
-                title: item.seriesTitle,
-                subtitle: epCode(item.season, item.episodeNumber) + (item.episodeTitle.map { " · " + $0 } ?? ""),
-                start: resume
-            )
+            gcast.load(url: url, title: item.seriesTitle, subtitle: subtitle(item), start: resume)
             return
         }
         guard let t = screenTarget else { throw ApiError(status: 0, message: "Kein Fernseher ausgewählt") }

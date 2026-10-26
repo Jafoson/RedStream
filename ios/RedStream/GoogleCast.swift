@@ -19,6 +19,8 @@ final class GoogleCastManager: NSObject, ObservableObject {
     @Published private(set) var playerState = "idle"
     @Published private(set) var position: Double = 0
     @Published private(set) var duration: Double = 0
+    /// URL of what the device plays (identifies the queue item).
+    @Published private(set) var contentID: String?
 
     private var timer: Timer?
 
@@ -63,9 +65,9 @@ final class GoogleCastManager: NSObject, ObservableObject {
         context.sessionManager.endSessionAndStopCasting(true)
     }
 
-    func load(url: URL, title: String, subtitle: String, start: Double) {
-        guard let client = client else { return }
+    private func queueItem(url: URL, title: String, subtitle: String, start: Double) -> GCKMediaQueueItem {
         let info = GCKMediaInformationBuilder(contentURL: url)
+        info.contentID = url.absoluteString
         info.streamType = .buffered
         info.contentType = "application/x-mpegurl"
         // Our HLS (downloads and most hosters) is MPEG-TS.
@@ -75,11 +77,31 @@ final class GoogleCastManager: NSObject, ObservableObject {
         meta.setString(title, forKey: kGCKMetadataKeySeriesTitle)
         meta.setString(subtitle, forKey: kGCKMetadataKeyTitle)
         info.metadata = meta
-        let request = GCKMediaLoadRequestDataBuilder()
-        request.mediaInformation = info.build()
-        request.autoplay = true
-        request.startTime = start
-        client.loadMedia(with: request.build())
+        let item = GCKMediaQueueItemBuilder()
+        item.mediaInformation = info.build()
+        item.autoplay = true
+        item.preloadTime = 20
+        item.startTime = start
+        return item.build()
+    }
+
+    /// Plays an episode as a new queue; more are added with `append`.
+    func load(url: URL, title: String, subtitle: String, start: Double) {
+        guard let client = client else { return }
+        let options = GCKMediaQueueLoadOptions()
+        options.startIndex = 0
+        options.playPosition = start
+        options.repeatMode = .off
+        client.queueLoad([queueItem(url: url, title: title, subtitle: subtitle, start: start)], with: options)
+    }
+
+    /// Adds an episode at the end of the device's queue — it plays there by itself.
+    func append(url: URL, title: String, subtitle: String) {
+        client?.queueInsert(queueItem(url: url, title: title, subtitle: subtitle, start: 0), beforeItemWithID: kGCKMediaQueueInvalidItemID)
+    }
+
+    func next() {
+        client?.queueNextItem()
     }
 
     func toggle() {
@@ -125,6 +147,7 @@ final class GoogleCastManager: NSObject, ObservableObject {
         playerState = "idle"
         position = 0
         duration = 0
+        contentID = nil
     }
 
     private func refresh() {
@@ -136,6 +159,7 @@ final class GoogleCastManager: NSObject, ObservableObject {
         default: playerState = "idle"
         }
         position = client.approximateStreamPosition()
+        contentID = client.mediaStatus?.mediaInformation?.contentID
         if let d = client.mediaStatus?.mediaInformation?.streamDuration, d.isFinite, d > 0 { duration = d }
     }
 }
